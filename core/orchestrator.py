@@ -3,16 +3,21 @@ from __future__ import annotations
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
+import shutil
+import subprocess
 from typing import Callable
+from urllib.parse import urlparse
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from parsers import enum4linux, nikto, nmap, nuclei, searchsploit, smbmap, whatweb
+from parsers import enum4linux, nikto, nmap, nuclei, searchsploit, smbmap, sslscan, visual, whatweb
 from reporting.generator import ReportGenerator
 
 from .config import ScanConfig
+from .delta import compare_record_with_previous
+from .fuser import VulnerabilityFuser
 from .identity import IdentityDetector
 from .interactive import InteractiveReview
 from .models import AuditIdentity, CommandResult, Finding, ScanRecord, Service, Target
@@ -27,6 +32,7 @@ class ScanOrchestrator:
         self.runner = CommandRunner(timeout=config.command_timeout)
         self.review = InteractiveReview(config.interactive, config.pause_severities)
         self.reporter = ReportGenerator()
+        self.fuser = VulnerabilityFuser()
 
     def scan_targets(self, targets: list[Target]) -> list[ScanRecord]:
         campaign_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -76,10 +82,14 @@ class ScanOrchestrator:
         self._run_nmap_deep_service_scripts(target, workspace, record, handle_finding)
         if self.config.profile == "deep":
             self._run_nmap_udp_deep_scripts(target, workspace, record, handle_finding)
+        self._run_sslscan_modules(target, workspace, record, handle_finding)
         self._run_smb_modules(target, workspace, record, handle_finding)
         self._run_web_modules(target, workspace, record, handle_finding)
+        self._run_visual_modules(target, workspace, record)
         self._run_auxiliary_modules(target, workspace, record, handle_finding)
 
+        self._fuse_record_findings(record)
+        self._apply_delta(record)
         md_path, html_path = self.reporter.write(record, workspace.reports)
         workspace.save_state(record)
         self.console.print(f"[green]Reportes generados:[/green] {md_path} | {html_path}")
@@ -438,6 +448,61 @@ class ScanOrchestrator:
                 handle_finding=handle_finding,
             )
 
+    def _run_sslscan_modules(
+        self,
+        target: Target,
+        workspace: ScanWorkspace,
+        record: ScanRecord,
+        handle_finding: Callable[[Finding], None],
+    ) -> None:
+        if not self.config.include_sslscan or not self.config.tool_enabled("sslscan"):
+            return
+        try:
+            binary = self.runner.require("sslscan")
+        except ToolUnavailable as exc:
+            self.console.print(f"[yellow]{exc}. Se omite auditoria TLS/SSL.[/yellow]")
+            return
+        supports_json = self._sslscan_supports_json(binary)
+        for service in self._tls_services(record.services):
+            endpoint = service.endpoint
+            structured_path = workspace.raw_path("sslscan", f"{service.port}", "json" if supports_json else "xml")
+            log_path = workspace.raw_path("sslscan", f"{service.port}", "log")
+            command = [binary, "--no-failed", "--show-certificate"]
+            if supports_json:
+                command.append("--json")
+            else:
+                command.append(f"--xml={structured_path}")
+            starttls = self._sslscan_starttls_flag(service)
+            if starttls:
+                command.append(starttls)
+            if service.port == 3389:
+                command.append("--rdp")
+            if target.host and target.host != target.scan_host:
+                command.extend(["--sni-name", target.host])
+            command.append(f"{target.scan_host}:{service.port}")
+            result = self._run_command(
+                target=target,
+                workspace=workspace,
+                record=record,
+                tool="sslscan",
+                profile=f"{service.port}",
+                command=command,
+                raw_output_path=log_path,
+                line_parser=None,
+                handle_finding=handle_finding,
+            )
+            findings: list[Finding] = []
+            if supports_json:
+                structured_path.write_text(result.stdout, encoding="utf-8", errors="ignore")
+                findings.extend(sslscan.parse_json_text(result.stdout, target, endpoint, str(structured_path)))
+            elif structured_path.exists():
+                findings.extend(sslscan.parse_xml(structured_path.read_text(encoding="utf-8", errors="ignore"), target, endpoint, str(structured_path)))
+            if not findings:
+                findings.extend(sslscan.parse_text(result.stdout, target, endpoint, str(log_path)))
+            for finding in findings:
+                handle_finding(finding)
+            self._log_result(result, workspace)
+
     def _run_web_modules(
         self,
         target: Target,
@@ -510,6 +575,68 @@ class ScanOrchestrator:
                     parser=lambda line, raw, url=url: self._with_raw(nikto.parse_line(line, target, url), raw),
                     handle_finding=handle_finding,
                 )
+
+    def _run_visual_modules(
+        self,
+        target: Target,
+        workspace: ScanWorkspace,
+        record: ScanRecord,
+    ) -> None:
+        if not self.config.include_visual or not self.config.tool_enabled("gowitness"):
+            return
+        urls = self._web_urls(target, record.services)
+        if not urls:
+            return
+        try:
+            binary = self.runner.require("gowitness")
+        except ToolUnavailable as exc:
+            self.console.print(f"[yellow]{exc}. Se omiten capturas web.[/yellow]")
+            return
+        for url in urls:
+            parsed = urlparse(url)
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            expected = workspace.screenshot_path(url, port)
+            before = {path.resolve() for path in workspace.screenshots.glob("*.png")}
+            profile = f"screenshot_{port}_{parsed.scheme or 'http'}"
+            log_path = workspace.raw_path("gowitness", profile, "log")
+            command = [
+                binary,
+                "scan",
+                "single",
+                "-u",
+                url,
+                "--screenshot-path",
+                str(workspace.screenshots),
+                "--timeout",
+                str(self.config.visual_timeout),
+            ]
+            result = self._run_command(
+                target=target,
+                workspace=workspace,
+                record=record,
+                tool="gowitness",
+                profile=profile,
+                command=command,
+                raw_output_path=log_path,
+                line_parser=None,
+                handle_finding=lambda finding: None,
+            )
+            screenshot = self._latest_new_screenshot(workspace.screenshots, before)
+            if screenshot and screenshot.exists():
+                if screenshot.resolve() != expected.resolve():
+                    expected.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(screenshot, expected)
+                record.visual_evidence.append(
+                    visual.build_evidence(
+                        target=target,
+                        url=url,
+                        screenshot_path=expected,
+                        raw_output_path=log_path,
+                        port=f"{port}/tcp",
+                        output=result.stdout,
+                    )
+                )
+            self._log_result(result, workspace)
 
     def _run_auxiliary_modules(
         self,
@@ -650,6 +777,53 @@ class ScanOrchestrator:
             urls[f"http://{host}"] = None
             urls[f"https://{host}"] = None
         return list(urls.keys())
+
+    def _tls_services(self, services: list[Service]) -> list[Service]:
+        tls_ports = {443, 465, 587, 636, 993, 995, 8443, 9443, 5986, 3389}
+        starttls_ports = {21, 25, 110, 143, 389, 587}
+        selected: "OrderedDict[tuple[str, int, str], Service]" = OrderedDict()
+        for service in services:
+            label = service.label.lower()
+            if service.port in tls_ports or service.port in starttls_ports or service.tunnel == "ssl" or "ssl" in label or "tls" in label or "https" in label:
+                selected[(service.protocol, service.port, service.host)] = service
+        return list(selected.values())
+
+    def _sslscan_starttls_flag(self, service: Service) -> str:
+        label = service.label.lower()
+        if service.port in {25, 587} or "smtp" in label:
+            return "--starttls-smtp"
+        if service.port == 110 or "pop3" in label:
+            return "--starttls-pop3"
+        if service.port == 143 or "imap" in label:
+            return "--starttls-imap"
+        if service.port == 21 or "ftp" in label:
+            return "--starttls-ftp"
+        if service.port == 389 or "ldap" in label:
+            return "--starttls-ldap"
+        return ""
+
+    def _sslscan_supports_json(self, binary: str) -> bool:
+        try:
+            result = subprocess.run([binary, "--help"], capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=5)
+        except Exception:
+            return False
+        return "--json" in f"{result.stdout}\n{result.stderr}"
+
+    def _latest_new_screenshot(self, screenshot_dir: Path, before: set[Path]) -> Path | None:
+        candidates = [path for path in screenshot_dir.glob("*.png") if path.resolve() not in before]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda item: item.stat().st_mtime)
+
+    def _fuse_record_findings(self, record: ScanRecord) -> None:
+        record.confirmed_findings = self.fuser.fuse(record.confirmed_findings)
+        record.observed_findings = self.fuser.fuse(record.observed_findings)
+        record.discarded_findings = self.fuser.fuse(record.discarded_findings)
+
+    def _apply_delta(self, record: ScanRecord) -> None:
+        if not self.config.compare_previous:
+            return
+        record.delta_summary = compare_record_with_previous(record, self.config.compare_previous)
 
     def _nuclei_template_args(self) -> list[str]:
         templates = [item.strip() for item in self.config.nuclei_templates.split(",") if item.strip()]

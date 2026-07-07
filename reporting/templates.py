@@ -31,4 +31,11 @@ pre {
 .sev-Low { color: #0369a1; font-weight: 700; }
 .sev-Info { color: #475569; font-weight: 700; }
 .meta { color: #52606d; }
+.screenshot-thumb {
+  width: 260px;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #bcccdc;
+  background: #ffffff;
+}
 """

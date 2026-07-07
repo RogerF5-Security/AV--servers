@@ -16,12 +16,13 @@ class ScanWorkspace:
         self.raw_outputs = self.root / "raw_outputs"
         self.reports = self.root / "reports"
         self.evidence_notes = self.root / "evidence_notes"
+        self.screenshots = self.evidence_notes / "screenshots"
         self.state_path = self.root / "state.json"
         self.exclusions_path = self.root / "exclusions.jsonl"
         self.commands_path = self.root / "commands.jsonl"
 
     def prepare(self) -> None:
-        for path in (self.raw_outputs, self.reports, self.evidence_notes):
+        for path in (self.raw_outputs, self.reports, self.evidence_notes, self.screenshots):
             path.mkdir(parents=True, exist_ok=True)
 
     def raw_path(self, tool: str, profile: str, suffix: str = "log") -> Path:
@@ -31,6 +32,10 @@ class ScanWorkspace:
     def evidence_path(self, finding: Finding) -> Path:
         safe = slugify(f"{finding.severity}_{finding.tool}_{finding.title}_{finding.fingerprint[:10]}")
         return self.evidence_notes / f"{safe}.md"
+
+    def screenshot_path(self, url: str, port: int | str) -> Path:
+        safe = slugify(f"{self.target.slug}_{port}_{url}", fallback="screenshot")
+        return self.screenshots / f"{safe}.png"
 
     def append_exclusion(self, finding: Finding) -> None:
         self.exclusions_path.parent.mkdir(parents=True, exist_ok=True)

@@ -4,7 +4,7 @@ set -Eeuo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NO_UPGRADE=0
 CHECK_ONLY=0
-REQUIRED_TOOLS=(python3 nmap whatweb nikto smbmap enum4linux-ng nuclei searchsploit)
+REQUIRED_TOOLS=(python3 nmap whatweb nikto smbmap enum4linux-ng nuclei searchsploit sslscan gowitness)
 OPTIONAL_TOOLS=()
 
 for arg in "$@"; do
@@ -25,7 +25,7 @@ Uso:
 Acciones:
   - Ejecuta apt update.
   - Actualiza paquetes del sistema salvo que uses --no-upgrade.
-  - Instala dependencias Kali: nmap, whatweb, nikto, smbmap, enum4linux-ng, exploitdb.
+  - Instala dependencias Kali: nmap, whatweb, nikto, smbmap, enum4linux-ng, exploitdb, sslscan, gowitness.
   - Instala Python/Rich y herramientas auxiliares.
   - Instala o actualiza Nuclei y sus templates.
   - Verifica si AV--servers esta listo para iniciar.
@@ -175,6 +175,9 @@ sudo apt install -y \
   smbmap \
   enum4linux-ng \
   exploitdb \
+  sslscan \
+  gowitness \
+  chromium \
   golang-go
 
 log "Preparando entorno Python local"
@@ -217,6 +220,18 @@ if need_cmd nuclei; then
   fi
 else
   echo "[!] Nuclei no quedo disponible en PATH. Reabre la terminal o agrega ~/go/bin al PATH." >&2
+fi
+
+if ! need_cmd gowitness; then
+  log "gowitness no esta en PATH; instalando con Go"
+  GOPATH="${GOPATH:-$HOME/go}"
+  GOBIN="${GOBIN:-$GOPATH/bin}"
+  mkdir -p "$GOBIN"
+  GO111MODULE=on go install -v github.com/sensepost/gowitness@latest
+  if [[ ":$PATH:" != *":$GOBIN:"* ]]; then
+    echo "export PATH=\"\$PATH:$GOBIN\"" >> "$HOME/.bashrc"
+    export PATH="$PATH:$GOBIN"
+  fi
 fi
 
 if [[ ! -f targets.txt ]]; then

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import csv
 import html
+import json
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
-from core.models import AuditIdentity, Finding, ScanRecord, SEVERITY_ORDER, clean_text, tail_text
+from core.models import AuditIdentity, Finding, ScanRecord, SEVERITY_ORDER, VisualEvidence, clean_text, tail_text
 from .templates import HTML_STYLE
 
 
@@ -26,6 +29,7 @@ class ReportGenerator:
         html_path = reports_dir / f"{base}.html"
         md_path.write_text(self.markdown(record), encoding="utf-8")
         html_path.write_text(self.html(record), encoding="utf-8")
+        self.write_enterprise_exports([record], reports_dir, Path(record.workspace).name)
         return md_path, html_path
 
     def write_campaign(
@@ -42,7 +46,37 @@ class ReportGenerator:
         html_path = scans_dir / f"{campaign_id}_reporte_final_todos_los_objetivos.html"
         md_path.write_text(self.campaign_markdown(records, identity, finished_at), encoding="utf-8")
         html_path.write_text(self.campaign_html(records, identity, finished_at), encoding="utf-8")
+        self.write_enterprise_exports(records, scans_dir, campaign_id)
         return md_path, html_path
+
+    def write_enterprise_exports(self, records: list[ScanRecord], output_dir: Path, prefix: str) -> tuple[Path, Path]:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = output_dir / f"{prefix}_reporte_consolidado.csv"
+        dojo_path = output_dir / f"{prefix}_defectdojo_generic.json"
+        findings = self._sort([finding for record in records for finding in [*record.confirmed_findings, *record.observed_findings]])
+        with csv_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=["Target", "Port", "Protocol", "Service", "Severity", "Tool", "Title", "CVE/CWE", "Remediation_Summary"],
+            )
+            writer.writeheader()
+            for finding in findings:
+                port, protocol = self._port_protocol(finding)
+                writer.writerow(
+                    {
+                        "Target": finding.target,
+                        "Port": port,
+                        "Protocol": protocol,
+                        "Service": finding.service,
+                        "Severity": finding.severity,
+                        "Tool": finding.tool,
+                        "Title": finding.title,
+                        "CVE/CWE": " / ".join(item for item in (finding.cve, finding.cwe) if item),
+                        "Remediation_Summary": finding.recommendation or "Validar, corregir y reducir exposicion del servicio afectado.",
+                    }
+                )
+        dojo_path.write_text(json.dumps({"findings": [self._defectdojo_finding(item) for item in findings]}, indent=2, ensure_ascii=False), encoding="utf-8")
+        return csv_path, dojo_path
 
     def campaign_markdown(self, records: list[ScanRecord], identity: AuditIdentity, finished_at: str) -> str:
         confirmed = self._sort([finding for record in records for finding in record.confirmed_findings])
@@ -115,6 +149,12 @@ class ReportGenerator:
         if observed:
             lines.extend(["", "## Observaciones Consolidadas", ""])
             lines.extend(self._markdown_findings(observed, empty=""))
+        if any(record.delta_summary for record in records):
+            lines.extend(["", "## Analisis Diferencial Consolidado", ""])
+            for record in records:
+                if record.delta_summary:
+                    lines.extend([f"### {record.target.display}", ""])
+                    lines.extend(self._markdown_delta(record.delta_summary))
         lines.extend(["", "## Falsos Positivos Descartados", ""])
         if discarded:
             lines.extend(["| Herramienta | Objetivo | Severidad | Titulo | Nota |", "|---|---|---|---|---|"])
@@ -181,6 +221,12 @@ class ReportGenerator:
         if observed:
             parts.append("<h2>Observaciones Consolidadas</h2>")
             parts.extend(self._html_findings(observed, ""))
+        if any(record.delta_summary for record in records):
+            parts.append("<h2>Analisis Diferencial Consolidado</h2>")
+            for record in records:
+                if record.delta_summary:
+                    parts.append(f"<h3>{html.escape(record.target.display)}</h3>")
+                    parts.extend(self._html_delta(record.delta_summary))
         parts.append("<h2>Falsos Positivos Descartados</h2>")
         if discarded:
             parts.append("<table><tr><th>Herramienta</th><th>Objetivo</th><th>Severidad</th><th>Titulo</th><th>Nota</th></tr>")
@@ -218,6 +264,9 @@ class ReportGenerator:
             lines.append(
                 f"| {self._sev(severity)} | {self._count(confirmed, severity)} | {self._count(observed, severity)} | {self._count(discarded, severity)} |"
             )
+        if record.delta_summary:
+            lines.extend(["", "## Analisis Diferencial (Delta de Seguridad)", ""])
+            lines.extend(self._markdown_delta(record.delta_summary))
         lines.extend(
             [
                 "",
@@ -241,6 +290,9 @@ class ReportGenerator:
                 )
         else:
             lines.append("| - | - | - | - | - |")
+
+        lines.extend(["", "### Resumen de Superficie Web", ""])
+        lines.extend(self._markdown_visual_evidence(record.visual_evidence))
 
         lines.extend(["", "### Herramientas Ejecutadas", ""])
         lines.extend(self._markdown_commands(record))
@@ -284,9 +336,12 @@ class ReportGenerator:
             parts.append(
                 f"<tr><td class='sev-{severity}'>{html.escape(self._sev(severity))}</td><td>{self._count(confirmed, severity)}</td><td>{self._count(observed, severity)}</td><td>{self._count(discarded, severity)}</td></tr>"
             )
+        parts.append("</table>")
+        if record.delta_summary:
+            parts.append("<h2>Analisis Diferencial (Delta de Seguridad)</h2>")
+            parts.extend(self._html_delta(record.delta_summary))
         parts.extend(
             [
-                "</table>",
                 "<h2>Alcance y Metodologia</h2>",
                 "<ul>",
                 f"<li>Objetivo: <code>{html.escape(record.target.raw)}</code></li>",
@@ -306,6 +361,8 @@ class ReportGenerator:
         else:
             parts.append("<tr><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td></tr>")
         parts.append("</table>")
+        parts.append("<h3>Resumen de Superficie Web</h3>")
+        parts.extend(self._html_visual_evidence(record.visual_evidence))
         parts.append("<h3>Herramientas Ejecutadas</h3>")
         parts.extend(self._html_commands(record))
         parts.extend(["<h2>Vulnerabilidades Confirmadas</h2>"])
@@ -388,6 +445,67 @@ class ReportGenerator:
             )
         return parts
 
+    def _markdown_visual_evidence(self, items: list[VisualEvidence]) -> list[str]:
+        if not items:
+            return ["No se registraron capturas visuales web."]
+        lines = ["| URL | Puerto | Estado | Titulo | Captura |", "|---|---|---|---|---|"]
+        for item in items:
+            shot = item.screenshot_path.replace("\\", "/")
+            lines.append(
+                f"| {item.url} | {item.port or '-'} | {item.status_code or '-'} | {clean_text(item.title, 120) or '-'} | ![captura]({shot}) |"
+            )
+        return lines
+
+    def _html_visual_evidence(self, items: list[VisualEvidence]) -> list[str]:
+        if not items:
+            return ["<p>No se registraron capturas visuales web.</p>"]
+        parts = ["<table><tr><th>URL</th><th>Puerto</th><th>Estado</th><th>Titulo</th><th>Captura</th></tr>"]
+        for item in items:
+            shot = item.screenshot_path.replace("\\", "/")
+            parts.append(
+                f"<tr><td><code>{html.escape(item.url)}</code></td><td>{html.escape(item.port or '-')}</td><td>{html.escape(item.status_code or '-')}</td><td>{html.escape(item.title or '-')}</td><td><img class='screenshot-thumb' src='{html.escape(shot)}' alt='Captura de {html.escape(item.url)}'></td></tr>"
+            )
+        parts.append("</table>")
+        return parts
+
+    def _markdown_delta(self, delta: dict[str, list[str]]) -> list[str]:
+        if delta.get("error"):
+            return [f"- Error de comparacion: {clean_text('; '.join(delta['error']), 220)}", ""]
+        lines: list[str] = []
+        sections = [
+            ("Nuevos Puertos / Servicios Expuestos", delta.get("new_services", []), "No se detectaron nuevos servicios."),
+            ("Nuevas Vulnerabilidades Detectadas", delta.get("new_findings", []), "No se detectaron vulnerabilidades nuevas."),
+            ("Vulnerabilidades Remediadas", delta.get("remediated_findings", []), "No se detectaron vulnerabilidades remediadas."),
+        ]
+        for title, values, empty in sections:
+            lines.extend([f"### {title}", ""])
+            if values:
+                lines.extend(f"- {clean_text(item, 220)}" for item in values)
+            else:
+                lines.append(empty)
+            lines.append("")
+        return lines
+
+    def _html_delta(self, delta: dict[str, list[str]]) -> list[str]:
+        if delta.get("error"):
+            return [f"<p><strong>Error de comparacion:</strong> {html.escape(clean_text('; '.join(delta['error']), 220))}</p>"]
+        parts: list[str] = []
+        sections = [
+            ("Nuevos Puertos / Servicios Expuestos", delta.get("new_services", []), "No se detectaron nuevos servicios."),
+            ("Nuevas Vulnerabilidades Detectadas", delta.get("new_findings", []), "No se detectaron vulnerabilidades nuevas."),
+            ("Vulnerabilidades Remediadas", delta.get("remediated_findings", []), "No se detectaron vulnerabilidades remediadas."),
+        ]
+        for title, values, empty in sections:
+            parts.append(f"<h3>{html.escape(title)}</h3>")
+            if values:
+                parts.append("<ul>")
+                for item in values:
+                    parts.append(f"<li>{html.escape(clean_text(item, 220))}</li>")
+                parts.append("</ul>")
+            else:
+                parts.append(f"<p>{html.escape(empty)}</p>")
+        return parts
+
     def _markdown_commands(self, record: ScanRecord) -> list[str]:
         if not record.commands:
             return ["No se registraron comandos ejecutados."]
@@ -437,3 +555,48 @@ class ReportGenerator:
 
     def _sev(self, severity: str) -> str:
         return SEVERITY_ES.get(severity, severity)
+
+    def _port_protocol(self, finding: Finding) -> tuple[str, str]:
+        if finding.port:
+            parts = finding.port.split("/", 1)
+            if len(parts) == 2:
+                return parts[0], parts[1]
+            return finding.port, ""
+        if finding.url:
+            parsed = urlparse(finding.url)
+            if parsed.port:
+                return str(parsed.port), "tcp"
+            if parsed.scheme == "https":
+                return "443", "tcp"
+            if parsed.scheme == "http":
+                return "80", "tcp"
+        return "", ""
+
+    def _defectdojo_finding(self, finding: Finding) -> dict:
+        port, protocol = self._port_protocol(finding)
+        description = finding.description or finding.evidence or finding.title
+        return {
+            "title": finding.title,
+            "severity": finding.severity,
+            "description": clean_text(description, 3000),
+            "mitigation": finding.recommendation or "Validar, corregir y reducir exposicion del servicio afectado.",
+            "impact": f"Afecta al objetivo {finding.target} en {finding.port or finding.url or 'superficie detectada'}.",
+            "references": finding.raw_output_path,
+            "cve": finding.cve,
+            "cwe": finding.cwe,
+            "active": True,
+            "verified": finding.status == "confirmed",
+            "false_p": False,
+            "unique_id_from_tool": finding.fingerprint,
+            "scanner_confidence": finding.confidence,
+            "endpoints": [
+                {
+                    "host": finding.ip or finding.target,
+                    "port": port,
+                    "protocol": protocol,
+                    "path": finding.url,
+                }
+            ],
+            "static_finding": False,
+            "dynamic_finding": True,
+        }

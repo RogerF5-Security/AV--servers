@@ -161,6 +161,23 @@ class Finding:
 
 
 @dataclass
+class VisualEvidence:
+    target: str
+    url: str
+    screenshot_path: str
+    ip: str = ""
+    port: str = ""
+    service: str = "web"
+    tool: str = "gowitness"
+    raw_output_path: str = ""
+    title: str = ""
+    status_code: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class CommandResult:
     tool: str
     profile: str
@@ -195,6 +212,8 @@ class ScanRecord:
     confirmed_findings: list[Finding] = field(default_factory=list)
     discarded_findings: list[Finding] = field(default_factory=list)
     observed_findings: list[Finding] = field(default_factory=list)
+    visual_evidence: list[VisualEvidence] = field(default_factory=list)
+    delta_summary: dict[str, list[str]] = field(default_factory=dict)
     commands: list[CommandResult] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -205,5 +224,7 @@ class ScanRecord:
             "confirmed_findings": [finding.to_dict() for finding in self.confirmed_findings],
             "discarded_findings": [finding.to_dict() for finding in self.discarded_findings],
             "observed_findings": [finding.to_dict() for finding in self.observed_findings],
+            "visual_evidence": [item.to_dict() for item in self.visual_evidence],
+            "delta_summary": self.delta_summary,
             "commands": [command.to_dict() for command in self.commands],
         }

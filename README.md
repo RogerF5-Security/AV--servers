@@ -17,6 +17,11 @@ AV--servers ejecuta herramientas nativas de Kali, guarda evidencia cruda, genera
 - Ejecuta fingerprinting web con `whatweb`.
 - Ejecuta validacion de vulnerabilidades con `nuclei` en modo automatico y por templates.
 - Ejecuta checks web con `nikto`.
+- Ejecuta capturas visuales automaticas de superficies HTTP/HTTPS con `gowitness`.
+- Ejecuta auditoria criptografica TLS/SSL con `sslscan`.
+- Fusiona hallazgos duplicados entre herramientas por IP, puerto, CVE/CWE o similitud de titulo.
+- Exporta CSV y JSON compatible con DefectDojo Generic Findings Import.
+- Puede comparar contra un `state.json` anterior para generar delta de seguridad.
 - Genera evidencia en `raw_outputs/`.
 - Genera notas por hallazgo en `evidence_notes/`.
 - Genera reportes Markdown y HTML completamente en espanol.
@@ -40,6 +45,7 @@ El instalador:
 - ejecuta `sudo apt update`;
 - ejecuta `sudo apt upgrade -y`;
 - instala `nmap`, `whatweb`, `nikto`, `smbmap`, `enum4linux-ng`, `exploitdb`, Python, Go y utilidades base;
+- instala `sslscan`, `gowitness` y `chromium` para auditoria TLS y evidencia visual;
 - crea `.venv`;
 - instala dependencias Python;
 - instala o actualiza Nuclei;
@@ -82,6 +88,8 @@ python3 vulnerability_engine.py
 ```
 
 Por defecto se usa perfil `deep` y timeout de `3600` segundos por comando. La herramienta esta pensada para completar un escaneo real, no para terminar rapido con conteos vacios.
+
+La ejecucion normal tambien genera capturas PNG en `evidence_notes/screenshots/`, exportacion CSV en `reports/`, exportacion DefectDojo JSON en `reports/` y artefactos consolidados de campana en `scans/`.
 
 Al iniciar, la herramienta imprime un bloque como este para que el SOC pueda dar lista blanca:
 
@@ -137,6 +145,9 @@ La version actual corrige el comportamiento observado donde se ejecutaba Nmap y 
 - Nuclei corre dos perfiles por URL: automatico (`-as`) y templates (`cves/`, `vulnerabilities/`, `misconfiguration/`);
 - Nmap ejecuta una fase dedicada `--script vuln`;
 - Nmap ejecuta scripts dirigidos para misconfiguraciones reales como SMB signing no requerido, FTP anonimo, HTTP TRACE/PUT/DELETE, TLS obsoleto/debil, RDP sin NLA, SMTP open relay, credenciales vacias en bases de datos, Redis expuesto, Docker API expuesta, SNMP legible y DNS recursivo;
+- sslscan ejecuta auditoria formal sobre servicios TLS/SSL y STARTTLS para identificar protocolos obsoletos, ciphers debiles y problemas de certificado;
+- gowitness toma evidencia visual de cada superficie web identificada y la incrusta como miniatura en el reporte;
+- el motor de fusion consolida hallazgos repetidos por IP, puerto, CVE/CWE o similitud de titulo;
 - Searchsploit correlaciona el XML de Nmap contra Exploit-DB.
 - El parser de Nmap convierte evidencia NSE de configuracion vulnerable en hallazgos aunque no exista una cadena `CVE-...`.
 - El parser de Nuclei entiende JSONL y tambien la salida textual clasica de Nuclei.
@@ -177,6 +188,20 @@ python3 vulnerability_engine.py \
   --nuclei-severity critical,high
 ```
 
+Comparar contra una auditoria previa:
+
+```bash
+python3 vulnerability_engine.py \
+  --target 10.189.169.130 \
+  --compare-previous scans/20260707_120000_10.189.169.130/state.json
+```
+
+Omitir capturas visuales o auditoria TLS si necesitas aislar una prueba:
+
+```bash
+python3 vulnerability_engine.py --target 10.189.169.130 --no-visual --no-sslscan
+```
+
 Desactivar fallbacks:
 
 ```bash
@@ -190,6 +215,8 @@ scans/
   latest_campaign_summary.md
   <timestamp>_reporte_final_todos_los_objetivos.md
   <timestamp>_reporte_final_todos_los_objetivos.html
+  <timestamp>_reporte_consolidado.csv
+  <timestamp>_defectdojo_generic.json
   <timestamp>_<target>/
     raw_outputs/
       nmap_discovery.log
@@ -200,13 +227,19 @@ scans/
       nmap_smb_deep.xml
       nmap_tls_deep.xml
       nmap_udp_deep.xml
+      sslscan_<port>.xml
+      gowitness_screenshot_<port>_<scheme>.log
       whatweb_http_<target>.log
       nuclei_http_<target>.log
       nikto_http_<target>.log
     reports/
       <target>_reporte.md
       <target>_reporte.html
+      <timestamp>_<target>_reporte_consolidado.csv
+      <timestamp>_<target>_defectdojo_generic.json
     evidence_notes/
+      screenshots/
+        <target>_<port>.png
       <severidad>_<herramienta>_<hallazgo>.md
     commands.jsonl
     exclusions.jsonl
@@ -224,6 +257,8 @@ scans/
 | `nuclei` | Validacion con templates de CVEs, vulnerabilities y misconfiguration. |
 | `nikto` | Checks de servidor web. |
 | `searchsploit` | Correlacion de servicios/versiones con Exploit-DB. |
+| `sslscan` | Auditoria TLS/SSL de protocolos, ciphers y certificados. |
+| `gowitness` | Capturas visuales de interfaces web. |
 
 ## Reporte
 
@@ -240,6 +275,9 @@ El reporte final incluye:
 - tabla de todos los objetivos;
 - conteo global por severidad;
 - vulnerabilidades consolidadas;
+- capturas visuales web;
+- analisis diferencial cuando se usa `--compare-previous`;
+- exportacion CSV y DefectDojo JSON;
 - falsos positivos descartados.
 
 Cada reporte individual incluye:
@@ -251,6 +289,7 @@ Cada reporte individual incluye:
 - herramientas ejecutadas;
 - vulnerabilidades confirmadas;
 - evidencia cruda;
+- miniaturas de capturas web;
 - notas del auditor;
 - recomendaciones de remediacion;
 - falsos positivos descartados.
@@ -264,6 +303,9 @@ AV--servers/
   targets.txt
   core/
     config.py
+    delta.py
+    fuser.py
+    identity.py
     interactive.py
     models.py
     orchestrator.py
@@ -275,7 +317,10 @@ AV--servers/
     nikto.py
     nmap.py
     nuclei.py
+    searchsploit.py
+    sslscan.py
     smbmap.py
+    visual.py
     whatweb.py
   reporting/
     generator.py
@@ -289,7 +334,7 @@ AV--servers/
 Verificar herramientas:
 
 ```bash
-which nmap nuclei smbmap enum4linux-ng whatweb nikto
+which nmap nuclei smbmap enum4linux-ng whatweb nikto sslscan gowitness
 ```
 
 Actualizar templates:

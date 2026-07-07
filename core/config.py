@@ -25,6 +25,10 @@ class ScanConfig:
     include_auxiliary_nmap: bool = True
     include_searchsploit: bool = True
     include_nmap_vuln: bool = True
+    include_sslscan: bool = True
+    include_visual: bool = True
+    visual_timeout: int = 20
+    compare_previous: Path | None = None
     fallback_common_checks: bool = True
 
     def tool_enabled(self, name: str) -> bool:
