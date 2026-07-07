@@ -73,6 +73,9 @@ class ScanOrchestrator:
         if service_xml:
             self._run_searchsploit(target, workspace, record, service_xml, handle_finding)
         self._run_nmap_vuln_scripts(target, workspace, record, handle_finding)
+        self._run_nmap_deep_service_scripts(target, workspace, record, handle_finding)
+        if self.config.profile == "deep":
+            self._run_nmap_udp_deep_scripts(target, workspace, record, handle_finding)
         self._run_smb_modules(target, workspace, record, handle_finding)
         self._run_web_modules(target, workspace, record, handle_finding)
         self._run_auxiliary_modules(target, workspace, record, handle_finding)
@@ -264,6 +267,142 @@ class ScanOrchestrator:
             line_parser=lambda line, raw: self._with_raw(searchsploit.parse_line(line, target), raw),
             handle_finding=handle_finding,
         )
+        self._log_result(result, workspace)
+
+    def _run_nmap_deep_service_scripts(
+        self,
+        target: Target,
+        workspace: ScanWorkspace,
+        record: ScanRecord,
+        handle_finding: Callable[[Finding], None],
+    ) -> None:
+        if not self.config.tool_enabled("nmap"):
+            return
+        port_set = {service.port for service in record.services}
+        if not port_set and self.config.fallback_common_checks:
+            port_set = {int(port) for port in self.config.fallback_service_ports.split(",") if port.strip().isdigit()}
+        profiles: list[tuple[str, set[int], str]] = [
+            (
+                "smb_deep",
+                {139, 445},
+                "smb-security-mode,smb2-security-mode,smb2-capabilities,smb-enum-shares,smb-enum-users,smb-os-discovery,smb-vuln-ms17-010,smb-vuln-ms08-067,smb-vuln-cve2009-3103,smb-vuln-ms10-054,smb-vuln-ms10-061",
+            ),
+            (
+                "web_deep",
+                {80, 81, 443, 8000, 8008, 8080, 8081, 8443, 8888, 9443},
+                "http-security-headers,http-methods,http-server-header,http-title,http-robots.txt,http-git,http-config-backup",
+            ),
+            (
+                "tls_deep",
+                {443, 465, 587, 636, 993, 995, 8443, 9443},
+                "ssl-enum-ciphers,ssl-cert,ssl-heartbleed,ssl-poodle,ssl-ccs-injection,ssl-dh-params,tls-alpn",
+            ),
+            ("ftp_deep", {21}, "ftp-anon,ftp-syst,ftp-vsftpd-backdoor,ftp-proftpd-backdoor"),
+            ("ssh_deep", {22}, "ssh2-enum-algos,ssh-hostkey"),
+            ("rdp_deep", {3389}, "rdp-enum-encryption,rdp-ntlm-info"),
+            ("smtp_deep", {25, 465, 587}, "smtp-open-relay,smtp-commands,smtp-vuln-cve2010-4344"),
+            ("mysql_deep", {3306}, "mysql-info,mysql-empty-password,mysql-vuln-cve2012-2122"),
+            ("mssql_deep", {1433}, "ms-sql-info,ms-sql-empty-password"),
+            ("postgres_deep", {5432}, "pgsql-empty-password"),
+            ("redis_deep", {6379}, "redis-info"),
+            ("docker_deep", {2375}, "docker-version"),
+            ("vnc_deep", {5900}, "vnc-info,realvnc-auth-bypass"),
+        ]
+        try:
+            nmap_bin = self.runner.require("nmap")
+        except ToolUnavailable as exc:
+            self.console.print(f"[yellow]{exc}. Se omiten scripts profundos Nmap.[/yellow]")
+            return
+        for profile, candidate_ports, scripts in profiles:
+            selected = sorted(port_set.intersection(candidate_ports))
+            if not selected:
+                continue
+            ports = ",".join(str(port) for port in selected)
+            xml_path = workspace.raw_path("nmap", profile, "xml")
+            log_path = workspace.raw_path("nmap", profile, "log")
+            command = [
+                nmap_bin,
+                "-sV",
+                "--version-all",
+                "-Pn",
+                "--script",
+                scripts,
+                "--script-timeout",
+                "90s",
+                "-p",
+                ports,
+                "-oX",
+                str(xml_path),
+                target.scan_host,
+            ]
+            result = self._run_command(
+                target=target,
+                workspace=workspace,
+                record=record,
+                tool="nmap",
+                profile=profile,
+                command=command,
+                raw_output_path=log_path,
+                line_parser=lambda line, raw: self._with_raw(nmap.parse_line(line, target), raw),
+                handle_finding=handle_finding,
+            )
+            if xml_path.exists():
+                services, findings = nmap.parse_services(xml_path.read_text(encoding="utf-8", errors="ignore"), target)
+                self._merge_services(record, services)
+                for finding in findings:
+                    finding.raw_output_path = str(xml_path)
+                    handle_finding(finding)
+            self._log_result(result, workspace)
+
+    def _run_nmap_udp_deep_scripts(
+        self,
+        target: Target,
+        workspace: ScanWorkspace,
+        record: ScanRecord,
+        handle_finding: Callable[[Finding], None],
+    ) -> None:
+        if not self.config.tool_enabled("nmap"):
+            return
+        try:
+            nmap_bin = self.runner.require("nmap")
+        except ToolUnavailable as exc:
+            self.console.print(f"[yellow]{exc}. Se omite perfil UDP profundo.[/yellow]")
+            return
+        xml_path = workspace.raw_path("nmap", "udp_deep", "xml")
+        log_path = workspace.raw_path("nmap", "udp_deep", "log")
+        command = [
+            nmap_bin,
+            "-sU",
+            "-Pn",
+            "--max-retries",
+            "2",
+            "--script",
+            "dns-recursion,ntp-info,snmp-info,snmp-sysdescr",
+            "--script-timeout",
+            "60s",
+            "-p",
+            "53,123,161",
+            "-oX",
+            str(xml_path),
+            target.scan_host,
+        ]
+        result = self._run_command(
+            target=target,
+            workspace=workspace,
+            record=record,
+            tool="nmap",
+            profile="udp_deep",
+            command=command,
+            raw_output_path=log_path,
+            line_parser=lambda line, raw: self._with_raw(nmap.parse_line(line, target), raw),
+            handle_finding=handle_finding,
+        )
+        if xml_path.exists():
+            services, findings = nmap.parse_services(xml_path.read_text(encoding="utf-8", errors="ignore"), target)
+            self._merge_services(record, services)
+            for finding in findings:
+                finding.raw_output_path = str(xml_path)
+                handle_finding(finding)
         self._log_result(result, workspace)
 
     def _run_smb_modules(
@@ -516,8 +655,23 @@ class ScanOrchestrator:
         templates = [item.strip() for item in self.config.nuclei_templates.split(",") if item.strip()]
         args: list[str] = []
         for template in templates:
-            args.extend(["-t", template])
+            args.extend(["-t", self._resolve_nuclei_template(template)])
         return args
+
+    def _resolve_nuclei_template(self, template: str) -> str:
+        candidate = Path(template).expanduser()
+        if candidate.is_absolute() and candidate.exists():
+            return str(candidate)
+        bases = [
+            Path.home() / ".local" / "nuclei-templates",
+            Path.home() / "nuclei-templates",
+            self.config.repo_root / "nuclei-templates",
+        ]
+        for base in bases:
+            resolved = base / template
+            if resolved.exists():
+                return str(resolved)
+        return template
 
     def _needs_nmap_tcp_fallback(self, result: CommandResult) -> bool:
         if result.returncode in {0, None}:

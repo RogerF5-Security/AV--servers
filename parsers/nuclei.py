@@ -9,12 +9,14 @@ from core.models import Finding, Target, clean_text, normalize_severity
 
 def parse_json_line(line: str, target: Target) -> list[Finding]:
     line = line.strip()
-    if not line or not line.startswith("{"):
+    if not line:
         return []
+    if not line.startswith("{"):
+        return parse_text_line(line, target)
     try:
         item = json.loads(line)
     except json.JSONDecodeError:
-        return []
+        return parse_text_line(line, target)
     if not isinstance(item, dict):
         return []
     return [finding_from_item(item, target)]
@@ -63,6 +65,38 @@ def finding_from_item(item: dict[str, Any], target: Target) -> Finding:
         confidence="medium",
         source_id=str(template_id),
     )
+
+
+def parse_text_line(line: str, target: Target) -> list[Finding]:
+    text = line.strip()
+    if not text.startswith("["):
+        return []
+    bracket_parts = re.findall(r"\[([^\]]+)\]", text)
+    severities = {"critical", "high", "medium", "low", "info", "informational", "unknown"}
+    severity_value = next((part for part in bracket_parts if part.lower() in severities), "")
+    if not severity_value or not bracket_parts:
+        return []
+    template_id = bracket_parts[0]
+    tail = re.sub(r"^(?:\[[^\]]+\]\s*)+", "", text).strip()
+    matched_at = tail.split()[0] if tail else target.url or target.display
+    cves = _extract_cves(text)
+    protocol = next((part for part in bracket_parts[1:] if part.lower() not in severities), "")
+    return [
+        Finding(
+            tool="nuclei",
+            target=target.display,
+            title=f"Nuclei: {template_id}",
+            severity=normalize_severity(severity_value),
+            ip=target.scan_host,
+            url=matched_at,
+            cve=", ".join(cves[:8]),
+            evidence=clean_text(text, 1400),
+            recommendation="Validar el resultado del template y aplicar la remediacion indicada por el fabricante o framework afectado.",
+            confidence="medium" if severity_value.lower() in {"critical", "high", "medium"} else "low",
+            source_id=str(template_id),
+            service=protocol,
+        )
+    ]
 
 
 def _extract_cves(text: str) -> list[str]:

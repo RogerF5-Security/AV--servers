@@ -47,6 +47,30 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+find_nuclei_template_dir() {
+  local candidates=()
+  if [[ -n "${NUCLEI_TEMPLATES:-}" ]]; then
+    candidates+=("$NUCLEI_TEMPLATES")
+  fi
+  candidates+=(
+    "$HOME/.local/nuclei-templates"
+    "$HOME/nuclei-templates"
+    "$PROJECT_DIR/nuclei-templates"
+    "$PROJECT_DIR/nuclei-templates-full"
+  )
+  local dir count
+  for dir in "${candidates[@]}"; do
+    if [[ -d "$dir" ]]; then
+      count="$(find "$dir" -type f \( -name '*.yaml' -o -name '*.yml' \) 2>/dev/null | wc -l | tr -d ' ')"
+      if [[ "${count:-0}" -gt 0 ]]; then
+        printf '%s|%s\n' "$dir" "$count"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
 check_ready() {
   local missing=0
   log "Verificando herramientas requeridas"
@@ -86,6 +110,23 @@ PY
   else
     python3 -B -m py_compile vulnerability_engine.py core/*.py parsers/*.py reporting/*.py || missing=1
     python3 vulnerability_engine.py --help >/dev/null || missing=1
+  fi
+
+  log "Verificando templates de Nuclei"
+  if need_cmd nuclei; then
+    local templates_info templates_dir templates_count
+    if templates_info="$(find_nuclei_template_dir)"; then
+      templates_dir="${templates_info%%|*}"
+      templates_count="${templates_info##*|}"
+      printf '[OK] Templates de Nuclei -> %s (%s archivos)\n' "$templates_dir" "$templates_count"
+    else
+      printf '[FALTA] No se encontraron templates de Nuclei con archivos .yaml/.yml\n' >&2
+      printf '        Ejecuta: nuclei -update-templates o vuelve a correr ./install.sh\n' >&2
+      missing=1
+    fi
+  else
+    printf '[FALTA] nuclei no esta disponible para validar templates\n' >&2
+    missing=1
   fi
 
   log "Verificando targets.txt"
@@ -159,6 +200,21 @@ if need_cmd nuclei; then
   log "Actualizando Nuclei y templates"
   nuclei -update || true
   nuclei -update-templates || true
+  if ! find_nuclei_template_dir >/dev/null 2>&1; then
+    log "Descargando nuclei-templates desde GitHub"
+    template_target=""
+    for candidate in "$HOME/.local/nuclei-templates" "$PROJECT_DIR/nuclei-templates" "$PROJECT_DIR/nuclei-templates-full" "$HOME/nuclei-templates-avservers"; do
+      if [[ ! -e "$candidate" ]]; then
+        template_target="$candidate"
+        break
+      fi
+    done
+    if [[ -z "$template_target" ]]; then
+      echo "[!] No hay una ruta libre para descargar nuclei-templates. Define NUCLEI_TEMPLATES con una ruta valida." >&2
+      exit 1
+    fi
+    git clone --depth 1 https://github.com/projectdiscovery/nuclei-templates.git "$template_target"
+  fi
 else
   echo "[!] Nuclei no quedo disponible en PATH. Reabre la terminal o agrega ~/go/bin al PATH." >&2
 fi

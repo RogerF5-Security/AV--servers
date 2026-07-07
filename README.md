@@ -9,6 +9,8 @@ AV--servers ejecuta herramientas nativas de Kali, guarda evidencia cruda, genera
 - Lee objetivos desde `targets.txt` o desde `--target`.
 - Ejecuta Nmap para descubrimiento de puertos y deteccion de servicios.
 - Ejecuta `nmap --script vuln` para validar scripts NSE de vulnerabilidad.
+- Ejecuta perfiles NSE profundos por servicio: SMB, HTTP, TLS, FTP, SSH, RDP, SMTP, MySQL, MSSQL, PostgreSQL, Redis, Docker y VNC.
+- Ejecuta un perfil UDP profundo para DNS, NTP y SNMP cuando se usa el modo `deep`.
 - Correlaciona versiones detectadas contra Exploit-DB con `searchsploit --nmap`.
 - Si el barrido inicial no devuelve servicios, ejecuta un fallback sobre puertos comunes para no finalizar con reportes vacios.
 - Ejecuta enumeracion SMB con `smbmap` y `enum4linux-ng` cuando corresponde.
@@ -42,6 +44,7 @@ El instalador:
 - instala dependencias Python;
 - instala o actualiza Nuclei;
 - actualiza templates de Nuclei;
+- valida que existan templates reales de Nuclei (`.yaml`/`.yml`);
 - valida si la herramienta tiene todo completo para iniciar.
 
 Si no quieres actualizar todos los paquetes del sistema:
@@ -77,6 +80,8 @@ Ejecutar todo el escaneo:
 ```bash
 python3 vulnerability_engine.py
 ```
+
+Por defecto se usa perfil `deep` y timeout de `3600` segundos por comando. La herramienta esta pensada para completar un escaneo real, no para terminar rapido con conteos vacios.
 
 Al iniciar, la herramienta imprime un bloque como este para que el SOC pueda dar lista blanca:
 
@@ -131,7 +136,10 @@ La version actual corrige el comportamiento observado donde se ejecutaba Nmap y 
 - SMB se intenta cuando se detecta 139/445 o cuando no hay datos de servicios y el fallback esta activo;
 - Nuclei corre dos perfiles por URL: automatico (`-as`) y templates (`cves/`, `vulnerabilities/`, `misconfiguration/`);
 - Nmap ejecuta una fase dedicada `--script vuln`;
+- Nmap ejecuta scripts dirigidos para misconfiguraciones reales como SMB signing no requerido, FTP anonimo, HTTP TRACE/PUT/DELETE, TLS obsoleto/debil, RDP sin NLA, SMTP open relay, credenciales vacias en bases de datos, Redis expuesto, Docker API expuesta, SNMP legible y DNS recursivo;
 - Searchsploit correlaciona el XML de Nmap contra Exploit-DB.
+- El parser de Nmap convierte evidencia NSE de configuracion vulnerable en hallazgos aunque no exista una cadena `CVE-...`.
+- El parser de Nuclei entiende JSONL y tambien la salida textual clasica de Nuclei.
 
 ## Ejemplos Utiles
 
@@ -188,6 +196,10 @@ scans/
       nmap_discovery.xml
       nmap_servicios_detectados.log
       nmap_servicios_detectados.xml
+      nmap_vuln_scripts.xml
+      nmap_smb_deep.xml
+      nmap_tls_deep.xml
+      nmap_udp_deep.xml
       whatweb_http_<target>.log
       nuclei_http_<target>.log
       nikto_http_<target>.log
@@ -284,6 +296,16 @@ Actualizar templates:
 
 ```bash
 nuclei -update-templates
+./install.sh --check-only
+```
+
+Si el reporte vuelve a quedar en cero, revisa primero la tabla `Herramientas ejecutadas` del HTML/Markdown. Ahi queda el comando exacto, retorno, duracion y cola de salida de cada herramienta; si Nuclei no cargo templates o Nmap no pudo ejecutar un script, la evidencia queda visible ahi.
+
+Forzar resolucion local de templates:
+
+```bash
+export NUCLEI_TEMPLATES="$HOME/.local/nuclei-templates"
+./install.sh --check-only
 ```
 
 Si Nmap es lento en `-p-`, ajustar el perfil:

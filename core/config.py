@@ -9,15 +9,15 @@ class ScanConfig:
     repo_root: Path
     targets_file: Path
     target_override: str | None = None
-    profile: str = "balanced"
+    profile: str = "deep"
     interactive: bool = False
     pause_severities: set[str] = field(default_factory=lambda: {"Critical", "High", "Medium"})
-    command_timeout: int = 1800
+    command_timeout: int = 3600
     nmap_discovery_args: list[str] = field(
         default_factory=lambda: ["-sT", "-p-", "--min-rate", "2000", "-Pn"]
     )
     nmap_service_args: list[str] = field(default_factory=lambda: ["-sV", "-sC", "-Pn"])
-    fallback_service_ports: str = "21,22,25,53,80,110,135,139,143,389,443,445,587,993,995,1433,1521,3306,3389,5432,5900,5985,5986,8000,8080,8443,8888"
+    fallback_service_ports: str = "21,22,25,53,80,110,135,139,143,389,443,445,587,993,995,1433,1521,2375,3306,3389,5000,5001,5432,5900,5985,5986,6379,8000,8080,8443,8888,9000,9090,9200,9300,10250,11211,15672,27017,27018"
     nuclei_templates: str = "cves/,vulnerabilities/,misconfiguration/"
     nuclei_severity: str = "critical,high,medium,low"
     skip_tools: set[str] = field(default_factory=set)
