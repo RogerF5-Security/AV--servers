@@ -1,32 +1,43 @@
-# Scan Titan Reuse Analysis
+# Analisis de Reutilizacion de Scan Titan
 
-This project reuses the practical architecture patterns from the local Scan Titan codebase at:
+Este proyecto toma patrones practicos del framework local Scan Titan ubicado en:
 
 `C:\Users\R0G3R\Documents\Tools\History`
 
-## Reused Concepts
+## Conceptos Reutilizados
 
-- Finding model: normalized severity, deterministic fingerprinting, evidence fields, remediation fields, and report-ready serialization.
-- Target loading: line-based `targets.txt`, comment skipping, URL/IP/host normalization, deduplication.
-- External tool execution: Nmap and Nuclei are treated as first-class evidence producers with raw output stored on disk.
-- Parser strategy: Nmap XML parsing, Nuclei JSONL parsing, and line-based extraction for terminal-native tools.
-- Reporting: executive summary, severity counts, detailed technical findings, raw evidence references, and false-positive appendix.
-- Workspace hygiene: scan artifacts are written under one structured scan folder and not mixed into source directories.
+- Modelo de hallazgos con severidad normalizada, fingerprint deterministico, evidencia, remediacion y serializacion para reporte.
+- Carga de objetivos desde `targets.txt`, ignorando comentarios y duplicados.
+- Ejecucion de herramientas externas con salida cruda persistida en disco.
+- Parseo de Nmap XML y Nuclei JSONL.
+- Separacion entre orquestacion, parseo, evidencia y reporting.
+- Reportes con resumen ejecutivo, metodologia, tabla de riesgo, detalle tecnico y anexo de falsos positivos.
+- Higiene de workspace: los artefactos de auditoria viven dentro de `scans/`.
 
-## Intentional Refactor
+## Refactor Intencional
 
-Scan Titan is a web-focused asynchronous scanner. `AV--servers` is a Kali-oriented network and web assessment runner. The code therefore refactors the reusable ideas into a smaller service-driven CLI:
+Scan Titan es un scanner web asincrono. AV--servers esta orientado a auditoria de servidores en Kali Linux, por eso se refactorizo hacia una CLI modular basada en herramientas del sistema:
 
-- `core/runner.py` streams external tool output and stores raw logs.
-- `core/interactive.py` pauses on Medium+ findings by default and lets the auditor confirm, discard, open a shell, or continue without pauses for that target.
-- `parsers/` contains one parser per Kali tool so new modules can be added without touching the orchestration core.
-- `reporting/` generates Markdown and HTML reports suitable for printing to PDF.
+- `core/runner.py` ejecuta comandos, captura salida y aplica timeouts.
+- `core/orchestrator.py` decide fases por objetivo y activa fallbacks zero-touch.
+- `core/interactive.py` solo se usa cuando el auditor pasa `--interactive`.
+- `parsers/` contiene un parser por herramienta.
+- `reporting/` genera Markdown y HTML en espanol.
 
-## Tool Coverage
+## Cobertura de Herramientas
 
-- Nmap discovery and service/NSE validation.
-- SMB enumeration through `smbmap` and `enum4linux-ng`.
-- Web fingerprinting through `whatweb`.
-- Vulnerability template validation through `nuclei`.
-- Web server checks through `nikto`.
-- Auxiliary Nmap modules for FTP, RDP, and WinRM where those services are detected.
+- Nmap para descubrimiento y deteccion de servicios.
+- Smbmap y enum4linux-ng para SMB.
+- WhatWeb para fingerprinting HTTP/HTTPS.
+- Nuclei para CVEs, vulnerabilidades y misconfigurations.
+- Nikto para checks web complementarios.
+
+## Mejora Zero-Touch
+
+La version actual evita que el flujo termine solo con Nmap:
+
+- usa `-sT` por defecto para no requerir sudo;
+- reintenta con `-sT` si `-sS` falla por privilegios;
+- lanza deteccion sobre puertos comunes si no se obtienen servicios;
+- prueba URLs HTTP/HTTPS basicas cuando no hay servicios web detectados;
+- confirma hallazgos automaticamente en modo zero-touch para que aparezcan en el reporte formal.

@@ -1,1 +1,1 @@
-"""Tool output parsers for AV--servers."""
+"""Parsers de salida de herramientas para AV--servers."""

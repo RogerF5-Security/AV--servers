@@ -37,7 +37,7 @@ class ScanOrchestrator:
         record = ScanRecord(target=target, workspace=str(workspace.root))
         seen_findings: set[str] = set()
 
-        self.console.rule(f"[bold cyan]Target: {target.display}[/bold cyan]")
+        self.console.rule(f"[bold cyan]Objetivo: {target.display}[/bold cyan]")
 
         def handle_finding(finding: Finding) -> None:
             if finding.fingerprint in seen_findings:
@@ -60,7 +60,7 @@ class ScanOrchestrator:
 
         md_path, html_path = self.reporter.write(record, workspace.reports)
         workspace.save_state(record)
-        self.console.print(f"[green]Reports written:[/green] {md_path} | {html_path}")
+        self.console.print(f"[green]Reportes generados:[/green] {md_path} | {html_path}")
         return record
 
     def _run_nmap_discovery(
@@ -77,7 +77,7 @@ class ScanOrchestrator:
         try:
             nmap_bin = self.runner.require("nmap")
         except ToolUnavailable as exc:
-            self.console.print(f"[yellow]{exc}[/yellow]")
+            self.console.print(f"[yellow]{exc}. Se omite Nmap para este objetivo.[/yellow]")
             return
         command = [nmap_bin, *self.config.nmap_discovery_args, "-oX", str(xml_path), target.scan_host]
         result = self._run_command(
@@ -91,6 +91,25 @@ class ScanOrchestrator:
             line_parser=lambda line, raw: self._with_raw(nmap.parse_line(line, target), raw),
             handle_finding=handle_finding,
         )
+        if self._needs_nmap_tcp_fallback(result):
+            self._log_result(result, workspace)
+            self.console.print("[yellow]Nmap SYN scan requiere privilegios. Reintentando discovery con -sT.[/yellow]")
+            fallback_xml = workspace.raw_path("nmap", "discovery_fallback_sT", "xml")
+            fallback_log = workspace.raw_path("nmap", "discovery_fallback_sT", "log")
+            fallback_args = ["-sT" if arg == "-sS" else arg for arg in self.config.nmap_discovery_args]
+            command = [nmap_bin, *fallback_args, "-oX", str(fallback_xml), target.scan_host]
+            result = self._run_command(
+                target=target,
+                workspace=workspace,
+                record=record,
+                tool="nmap",
+                profile="discovery_fallback_sT",
+                command=command,
+                raw_output_path=fallback_log,
+                line_parser=lambda line, raw: self._with_raw(nmap.parse_line(line, target), raw),
+                handle_finding=handle_finding,
+            )
+            xml_path = fallback_xml
         if xml_path.exists():
             services, findings = nmap.parse_services(xml_path.read_text(encoding="utf-8", errors="ignore"), target)
             self._merge_services(record, services)
@@ -106,17 +125,21 @@ class ScanOrchestrator:
         record: ScanRecord,
         handle_finding: Callable[[Finding], None],
     ) -> None:
-        if not self.config.tool_enabled("nmap") or not record.services:
+        if not self.config.tool_enabled("nmap"):
             return
         ports = ",".join(str(service.port) for service in sorted(record.services, key=lambda item: item.port))
+        profile = "servicios_detectados"
+        if not ports and self.config.fallback_common_checks:
+            ports = self.config.fallback_service_ports
+            profile = "servicios_comunes"
         if not ports:
             return
-        xml_path = workspace.raw_path("nmap", "services", "xml")
-        log_path = workspace.raw_path("nmap", "services", "log")
+        xml_path = workspace.raw_path("nmap", profile, "xml")
+        log_path = workspace.raw_path("nmap", profile, "log")
         try:
             nmap_bin = self.runner.require("nmap")
         except ToolUnavailable as exc:
-            self.console.print(f"[yellow]{exc}[/yellow]")
+            self.console.print(f"[yellow]{exc}. Se omite deteccion de servicios.[/yellow]")
             return
         command = [nmap_bin, *self.config.nmap_service_args, "-p", ports, "-oX", str(xml_path), target.scan_host]
         result = self._run_command(
@@ -124,7 +147,7 @@ class ScanOrchestrator:
             workspace=workspace,
             record=record,
             tool="nmap",
-            profile="services",
+            profile=profile,
             command=command,
             raw_output_path=log_path,
             line_parser=lambda line, raw: self._with_raw(nmap.parse_line(line, target), raw),
@@ -145,7 +168,8 @@ class ScanOrchestrator:
         record: ScanRecord,
         handle_finding: Callable[[Finding], None],
     ) -> None:
-        if not any(service.port in {139, 445} for service in record.services):
+        should_probe_smb = any(service.port in {139, 445} for service in record.services)
+        if not should_probe_smb and not (self.config.fallback_common_checks and not record.services):
             return
         if self.config.tool_enabled("smbmap"):
             self._run_simple_parser(
@@ -201,8 +225,7 @@ class ScanOrchestrator:
                         binary,
                         "-u",
                         url,
-                        "-t",
-                        self.config.nuclei_templates,
+                        *self._nuclei_template_args(),
                         "-severity",
                         self.config.nuclei_severity,
                         "-jsonl",
@@ -282,7 +305,7 @@ class ScanOrchestrator:
         try:
             binary = self.runner.require(tool)
         except ToolUnavailable as exc:
-            self.console.print(f"[yellow]{exc}[/yellow]")
+            self.console.print(f"[yellow]{exc}. Se omite {tool}.[/yellow]")
             return
         raw_path = workspace.raw_path(tool, profile, "log")
         command = command_builder(binary)
@@ -312,7 +335,7 @@ class ScanOrchestrator:
         line_parser: Callable[[str, str], list[Finding]] | None,
         handle_finding: Callable[[Finding], None],
     ) -> CommandResult:
-        self.console.print(f"[cyan]Running[/cyan] {tool}:{profile} -> {target.display}")
+        self.console.print(f"[cyan]Ejecutando[/cyan] {tool}:{profile} -> {target.display}")
         result = self.runner.run(
             tool=tool,
             profile=profile,
@@ -327,7 +350,7 @@ class ScanOrchestrator:
         if result.timed_out:
             self.console.print(f"[yellow]Timeout[/yellow] {tool}:{profile}")
         elif result.returncode not in {0, None}:
-            self.console.print(f"[yellow]Exit {result.returncode}[/yellow] {tool}:{profile}")
+            self.console.print(f"[yellow]Salida {result.returncode}[/yellow] {tool}:{profile}")
         return result
 
     def _with_raw(self, findings: list[Finding], raw_path: str) -> list[Finding]:
@@ -357,7 +380,28 @@ class ScanOrchestrator:
             default = (scheme == "http" and service.port == 80) or (scheme == "https" and service.port == 443)
             port_part = "" if default else f":{service.port}"
             urls[f"{scheme}://{target.host or target.scan_host}{port_part}"] = None
+        if not urls and self.config.fallback_common_checks:
+            host = target.host or target.scan_host
+            urls[f"http://{host}"] = None
+            urls[f"https://{host}"] = None
         return list(urls.keys())
+
+    def _nuclei_template_args(self) -> list[str]:
+        templates = [item.strip() for item in self.config.nuclei_templates.split(",") if item.strip()]
+        args: list[str] = []
+        for template in templates:
+            args.extend(["-t", template])
+        return args
+
+    def _needs_nmap_tcp_fallback(self, result: CommandResult) -> bool:
+        if result.returncode in {0, None}:
+            return False
+        text = f"{result.stdout}\n{result.stderr}".lower()
+        return "-ss" in " ".join(result.command).lower() and (
+            "requires root privileges" in text
+            or "you requested a scan type which requires root privileges" in text
+            or "root privileges" in text
+        )
 
     def _log_result(self, result: CommandResult, workspace: ScanWorkspace) -> None:
         workspace.append_command(result.to_dict())
@@ -369,9 +413,9 @@ class ScanOrchestrator:
         summary_dir.mkdir(parents=True, exist_ok=True)
         path = summary_dir / "latest_campaign_summary.md"
         lines = [
-            "# Latest Campaign Summary",
+            "# Resumen de la Ultima Campana",
             "",
-            "| Target | Confirmed | Observed | Discarded | Workspace |",
+            "| Objetivo | Confirmados | Observados | Descartados | Workspace |",
             "|---|---:|---:|---:|---|",
         ]
         for record in records:

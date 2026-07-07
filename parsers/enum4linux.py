@@ -16,13 +16,13 @@ def parse_line(line: str, target: Target) -> list[Finding]:
                 Finding(
                     tool="enum4linux-ng",
                     target=target.display,
-                    title="SMB null session appears to be allowed",
+                    title="La sesion nula SMB parece estar permitida",
                     severity="Medium",
                     ip=target.scan_host,
                     port="445/tcp",
                     service="smb",
                     evidence=clean_text(text, 1000),
-                    recommendation="Disable anonymous SMB enumeration and validate RestrictAnonymous settings.",
+                    recommendation="Deshabilitar la enumeracion SMB anonima y validar la configuracion RestrictAnonymous.",
                     confidence="medium",
                     source_id="enum4linux-null-session",
                 )
@@ -32,13 +32,13 @@ def parse_line(line: str, target: Target) -> list[Finding]:
             Finding(
                 tool="enum4linux-ng",
                 target=target.display,
-                title="SMB enumeration returned directory or share data",
+                title="La enumeracion SMB devolvio usuarios, grupos o recursos compartidos",
                 severity="Low",
                 ip=target.scan_host,
                 port="445/tcp",
                 service="smb",
                 evidence=clean_text(text, 1000),
-                recommendation="Restrict SMB enumeration to authenticated administrative contexts.",
+                recommendation="Restringir la enumeracion SMB a contextos autenticados y administrativos.",
                 confidence="low",
                 source_id="enum4linux-enumeration",
             )

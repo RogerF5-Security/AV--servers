@@ -16,13 +16,13 @@ def parse_line(line: str, target: Target) -> list[Finding]:
             Finding(
                 tool="smbmap",
                 target=target.display,
-                title="SMB share with write-capable or read/write permissions",
+                title="Recurso SMB con permisos de escritura o lectura/escritura",
                 severity="High" if "write" in lower else "Medium",
                 ip=target.scan_host,
                 port="445/tcp",
                 service="smb",
                 evidence=clean_text(text, 1200),
-                recommendation="Remove anonymous or broad share permissions and enforce least-privilege ACLs.",
+                recommendation="Eliminar permisos anonimos o demasiado amplios y aplicar ACLs con minimo privilegio.",
                 confidence="medium",
                 source_id="smbmap-share-permission",
             )
@@ -32,13 +32,13 @@ def parse_line(line: str, target: Target) -> list[Finding]:
             Finding(
                 tool="smbmap",
                 target=target.display,
-                title="SMB anonymous or null session access detected",
+                title="Acceso anonimo o sesion nula SMB detectada",
                 severity="Medium",
                 ip=target.scan_host,
                 port="445/tcp",
                 service="smb",
                 evidence=clean_text(text, 1000),
-                recommendation="Disable null sessions and require authenticated SMB access.",
+                recommendation="Deshabilitar sesiones nulas y exigir autenticacion para acceso SMB.",
                 confidence="medium",
                 source_id="smbmap-null-session",
             )

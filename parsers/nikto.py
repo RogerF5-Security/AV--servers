@@ -21,14 +21,14 @@ def parse_line(line: str, target: Target, url: str) -> list[Finding]:
         Finding(
             tool="nikto",
             target=target.display,
-            title=f"Nikto web finding: {', '.join(cves[:3]) if cves else clean_text(text.lstrip('+').strip(), 90)}",
+            title=f"Hallazgo web de Nikto: {', '.join(cves[:3]) if cves else clean_text(text.lstrip('+').strip(), 90)}",
             severity=severity,
             ip=target.scan_host,
             url=url,
             service="web",
             cve=", ".join(cves[:8]),
             evidence=clean_text(text, 1400),
-            recommendation="Validate the Nikto finding manually and remediate the affected web server or application control.",
+            recommendation="Validar el hallazgo de Nikto y corregir el control afectado en el servidor web o la aplicacion.",
             confidence="medium" if cves else "low",
             source_id="nikto-line",
         )

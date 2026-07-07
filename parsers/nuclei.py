@@ -37,14 +37,14 @@ def finding_from_item(item: dict[str, Any], target: Target) -> Finding:
     cwe = _join(classification.get("cwe-id") or classification.get("cwe"))
     extracted = item.get("extracted-results") or item.get("extracted_results") or []
     evidence_parts = [
-        f"Template={template_id}",
+        f"Plantilla={template_id}",
         f"Matcher={item.get('matcher-name', '-')}",
-        f"Type={item.get('type', '-')}",
+        f"Tipo={item.get('type', '-')}",
         f"Host={item.get('host', '-')}",
-        f"Matched={item.get('matched-at') or item.get('url') or '-'}",
+        f"Coincidencia={item.get('matched-at') or item.get('url') or '-'}",
     ]
     if extracted:
-        evidence_parts.append(f"Extracted={clean_text(extracted, 500)}")
+        evidence_parts.append(f"Extraido={clean_text(extracted, 500)}")
     if item.get("curl-command"):
         evidence_parts.append(f"Curl={clean_text(item.get('curl-command'), 500)}")
     return Finding(
@@ -59,7 +59,7 @@ def finding_from_item(item: dict[str, Any], target: Target) -> Finding:
         cvss=str(classification.get("cvss-score") or classification.get("cvss") or ""),
         description=clean_text(info.get("description") or "", 1000),
         evidence=" | ".join(evidence_parts),
-        recommendation=info.get("remediation") or info.get("reference") or "Validate the template result and apply the vendor or framework remediation.",
+        recommendation=info.get("remediation") or info.get("reference") or "Validar el resultado del template y aplicar la remediacion indicada por el fabricante o framework afectado.",
         confidence="medium",
         source_id=str(template_id),
     )

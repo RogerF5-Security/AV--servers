@@ -30,14 +30,14 @@ def parse_line(line: str, target: Target, url: str) -> list[Finding]:
         Finding(
             tool="whatweb",
             target=target.display,
-            title="Web technology fingerprint requires version validation",
+            title="Fingerprint de tecnologia web requiere validacion de version",
             severity="Low",
             ip=target.scan_host,
             url=url,
             service="web",
             evidence=clean_text(text, 1400),
-            description=f"Detected exposed technology fingerprint{': ' + ', '.join(versions[:5]) if versions else ''}.",
-            recommendation="Verify exposed versions, hide unnecessary banners, and patch affected components.",
+            description=f"Se detecto fingerprint expuesto de tecnologia{': ' + ', '.join(versions[:5]) if versions else ''}.",
+            recommendation="Verificar versiones expuestas, reducir banners innecesarios y parchear componentes afectados.",
             confidence="low",
             source_id="whatweb-tech-fingerprint",
         )

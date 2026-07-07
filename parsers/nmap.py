@@ -53,7 +53,7 @@ def parse_line(line: str, target: Target) -> list[Finding]:
         Finding(
             tool="nmap",
             target=target.display,
-            title=f"Nmap vulnerability signal: {', '.join(cves[:3]) if cves else clean_text(line, 80)}",
+            title=f"Senal de vulnerabilidad detectada por Nmap: {', '.join(cves[:3]) if cves else clean_text(line, 80)}",
             severity=_severity_from_text(line),
             ip=target.scan_host,
             cve=", ".join(cves[:8]),
@@ -75,14 +75,14 @@ def _script_finding(target: Target, service: Service, script_id: str, output: st
     return Finding(
         tool="nmap",
         target=target.display,
-        title=f"Nmap NSE finding on {service.endpoint}: {', '.join(cves[:5]) if cves else script_id}",
+        title=f"Hallazgo NSE de Nmap en {service.endpoint}: {', '.join(cves[:5]) if cves else script_id}",
         severity=_severity_from_text(output),
         ip=target.scan_host,
         port=service.endpoint,
         service=service.label,
         cve=", ".join(cves[:8]),
         evidence=clean_text(output, 1800),
-        recommendation="Validate affected software versions, patch vulnerable services, and restrict exposure where possible.",
+        recommendation="Validar versiones afectadas, aplicar parches del fabricante y restringir la exposicion del servicio cuando sea posible.",
         confidence="medium" if cves else "low",
         source_id=f"nmap:{script_id}",
     )

@@ -27,7 +27,7 @@ class CommandRunner:
     def require(self, binary: str) -> str:
         resolved = shutil.which(binary)
         if not resolved:
-            raise ToolUnavailable(f"{binary} not found in PATH")
+            raise ToolUnavailable(f"{binary} no se encontro en PATH")
         return resolved
 
     def run(

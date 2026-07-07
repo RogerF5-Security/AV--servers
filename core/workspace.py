@@ -39,29 +39,42 @@ class ScanWorkspace:
 
     def write_evidence_note(self, finding: Finding) -> Path:
         path = self.evidence_path(finding)
+        estado = {
+            "confirmed": "confirmado",
+            "discarded": "descartado",
+            "observed": "observado",
+            "potential": "potencial",
+        }.get(finding.status, finding.status)
+        severidad = {
+            "Critical": "Critica",
+            "High": "Alta",
+            "Medium": "Media",
+            "Low": "Baja",
+            "Info": "Informativa",
+        }.get(finding.severity, finding.severity)
         lines = [
-            f"# Evidence Note - {finding.title}",
+            f"# Nota de Evidencia - {finding.title}",
             "",
-            f"- Tool: {finding.tool}",
-            f"- Severity: {finding.severity}",
-            f"- Target: {finding.target}",
+            f"- Herramienta: {finding.tool}",
+            f"- Severidad: {severidad}",
+            f"- Objetivo: {finding.target}",
             f"- IP: {finding.ip or '-'}",
             f"- URL: {finding.url or '-'}",
-            f"- Port/Service: {finding.port or '-'} {finding.service or ''}".strip(),
+            f"- Puerto/Servicio: {finding.port or '-'} {finding.service or ''}".strip(),
             f"- CVE/CWE: {finding.cve or '-'} / {finding.cwe or '-'}",
-            f"- Status: {finding.status}",
+            f"- Estado: {estado}",
             "",
-            "## Auditor Note",
+            "## Nota del Auditor",
             "",
             finding.auditor_note or "-",
             "",
-            "## Evidence",
+            "## Evidencia",
             "",
             "```text",
             finding.evidence or "-",
             "```",
             "",
-            f"Raw output: `{finding.raw_output_path or '-'}`",
+            f"Salida cruda: `{finding.raw_output_path or '-'}`",
         ]
         path.write_text("\n".join(lines), encoding="utf-8")
         return path

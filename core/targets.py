@@ -8,13 +8,13 @@ from urllib.parse import urlparse
 from .models import Target
 
 
-TARGET_FILE_TEMPLATE = """# Add one authorized target per line.
-# Supported formats:
+TARGET_FILE_TEMPLATE = """# Agrega un objetivo autorizado por linea.
+# Formatos soportados:
 #   192.0.2.10
 #   example.internal
 #   https://app.example.internal
 #
-# Lines starting with # are ignored.
+# Las lineas que empiezan con # se ignoran.
 """
 
 

@@ -39,14 +39,22 @@ class InteractiveReview:
         return finding.severity in self.pause_severities
 
     def review(self, finding: Finding, workspace: ScanWorkspace) -> Finding:
+        if not self.enabled:
+            finding.status = "confirmed"
+            finding.auditor_note = finding.auditor_note or "Confirmado automaticamente por modo zero-touch."
+            workspace.write_evidence_note(finding)
+            return finding
+
         if self.state.skip_for(finding.target):
             finding.status = "confirmed"
-            finding.auditor_note = finding.auditor_note or "Auto-added after auditor selected continue without pauses for this target."
+            finding.auditor_note = finding.auditor_note or "Agregado automaticamente despues de seleccionar continuar sin pausas para este objetivo."
             workspace.write_evidence_note(finding)
             return finding
 
         if not self.should_pause(finding):
-            finding.status = "observed"
+            finding.status = "confirmed"
+            finding.auditor_note = finding.auditor_note or "Confirmado automaticamente porque la severidad no requiere pausa interactiva."
+            workspace.write_evidence_note(finding)
             return finding
 
         while True:
@@ -64,7 +72,7 @@ class InteractiveReview:
                 return finding
             if choice == "D":
                 finding.status = "discarded"
-                finding.auditor_note = Prompt.ask("Motivo del descarte", default="False positive / not reproducible")
+                finding.auditor_note = Prompt.ask("Motivo del descarte", default="Falso positivo / no reproducible")
                 workspace.append_exclusion(finding)
                 return finding
             if choice == "P":
@@ -73,21 +81,21 @@ class InteractiveReview:
             if choice == "C":
                 self.state.set_skip(finding.target)
                 finding.status = "confirmed"
-                finding.auditor_note = "Auto-added after auditor selected continue without pauses for this target."
+                finding.auditor_note = "Agregado automaticamente despues de seleccionar continuar sin pausas para este objetivo."
                 workspace.write_evidence_note(finding)
                 return finding
 
     def _render(self, finding: Finding) -> None:
-        self.console.rule("[bold red]Potential Vulnerability Detected[/bold red]")
+        self.console.rule("[bold red]Vulnerabilidad potencial detectada[/bold red]")
         table = Table(show_header=False, box=None)
         for key, value in [
-            ("Tool", finding.tool),
-            ("Target", finding.target),
+            ("Herramienta", finding.tool),
+            ("Objetivo", finding.target),
             ("IP/URL", finding.ip or finding.url or "-"),
-            ("Port/Service", f"{finding.port or '-'} {finding.service or ''}".strip()),
-            ("Severity", finding.severity),
+            ("Puerto/Servicio", f"{finding.port or '-'} {finding.service or ''}".strip()),
+            ("Severidad", self._sev(finding.severity)),
             ("CVE/CWE", f"{finding.cve or '-'} / {finding.cwe or '-'}"),
-            ("Raw Output", finding.raw_output_path or "-"),
+            ("Salida cruda", finding.raw_output_path or "-"),
         ]:
             table.add_row(f"[bold]{key}[/bold]", str(value))
         self.console.print(table)
@@ -101,8 +109,17 @@ class InteractiveReview:
 
     def _open_shell(self) -> None:
         shell = os.environ.get("SHELL") or "/bin/bash"
-        self.console.print(f"[yellow]Opening temporary shell: {shell}. Type 'exit' to return.[/yellow]")
+        self.console.print(f"[yellow]Abriendo shell temporal: {shell}. Escribe 'exit' para volver.[/yellow]")
         try:
             subprocess.run([shell], check=False)
         except OSError as exc:
-            self.console.print(f"[red]Could not open shell: {exc}[/red]")
+            self.console.print(f"[red]No se pudo abrir la shell: {exc}[/red]")
+
+    def _sev(self, severity: str) -> str:
+        return {
+            "Critical": "Critica",
+            "High": "Alta",
+            "Medium": "Media",
+            "Low": "Baja",
+            "Info": "Informativa",
+        }.get(severity, severity)
