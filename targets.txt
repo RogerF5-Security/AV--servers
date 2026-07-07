@@ -1,0 +1,5 @@
+# Add one authorized target per line.
+# Examples:
+# 192.0.2.10
+# server.internal
+# https://app.example.internal

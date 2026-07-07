@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+.env
+.env.*
+pip-wheel-metadata/
+build/
+dist/
+*.egg-info/
+
+# Local scan output and evidence should stay on the audit workstation.
+scans/
+
+# OS/editor noise.
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
