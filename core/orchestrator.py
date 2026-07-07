@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from parsers import enum4linux, nikto, nmap, nuclei, smbmap, whatweb
+from parsers import enum4linux, nikto, nmap, nuclei, searchsploit, smbmap, whatweb
 from reporting.generator import ReportGenerator
 
 from .config import ScanConfig
@@ -69,7 +69,10 @@ class ScanOrchestrator:
             workspace.save_state(record)
 
         self._run_nmap_discovery(target, workspace, record, handle_finding)
-        self._run_nmap_services(target, workspace, record, handle_finding)
+        service_xml = self._run_nmap_services(target, workspace, record, handle_finding)
+        if service_xml:
+            self._run_searchsploit(target, workspace, record, service_xml, handle_finding)
+        self._run_nmap_vuln_scripts(target, workspace, record, handle_finding)
         self._run_smb_modules(target, workspace, record, handle_finding)
         self._run_web_modules(target, workspace, record, handle_finding)
         self._run_auxiliary_modules(target, workspace, record, handle_finding)
@@ -85,9 +88,9 @@ class ScanOrchestrator:
         workspace: ScanWorkspace,
         record: ScanRecord,
         handle_finding: Callable[[Finding], None],
-    ) -> None:
+    ) -> Path | None:
         if not self.config.tool_enabled("nmap"):
-            return
+            return None
         xml_path = workspace.raw_path("nmap", "discovery", "xml")
         log_path = workspace.raw_path("nmap", "discovery", "log")
         try:
@@ -149,14 +152,14 @@ class ScanOrchestrator:
             ports = self.config.fallback_service_ports
             profile = "servicios_comunes"
         if not ports:
-            return
+            return None
         xml_path = workspace.raw_path("nmap", profile, "xml")
         log_path = workspace.raw_path("nmap", profile, "log")
         try:
             nmap_bin = self.runner.require("nmap")
         except ToolUnavailable as exc:
             self.console.print(f"[yellow]{exc}. Se omite deteccion de servicios.[/yellow]")
-            return
+            return None
         command = [nmap_bin, *self.config.nmap_service_args, "-p", ports, "-oX", str(xml_path), target.scan_host]
         result = self._run_command(
             target=target,
@@ -175,6 +178,92 @@ class ScanOrchestrator:
             for finding in findings:
                 finding.raw_output_path = str(xml_path)
                 handle_finding(finding)
+        self._log_result(result, workspace)
+        return xml_path if xml_path.exists() else None
+
+    def _run_nmap_vuln_scripts(
+        self,
+        target: Target,
+        workspace: ScanWorkspace,
+        record: ScanRecord,
+        handle_finding: Callable[[Finding], None],
+    ) -> None:
+        if not self.config.include_nmap_vuln or not self.config.tool_enabled("nmap"):
+            return
+        ports = ",".join(str(service.port) for service in sorted(record.services, key=lambda item: item.port))
+        if not ports and self.config.fallback_common_checks:
+            ports = self.config.fallback_service_ports
+        if not ports:
+            return
+        xml_path = workspace.raw_path("nmap", "vuln_scripts", "xml")
+        log_path = workspace.raw_path("nmap", "vuln_scripts", "log")
+        try:
+            nmap_bin = self.runner.require("nmap")
+        except ToolUnavailable as exc:
+            self.console.print(f"[yellow]{exc}. Se omite Nmap vuln.[/yellow]")
+            return
+        command = [
+            nmap_bin,
+            "-sV",
+            "--version-all",
+            "-Pn",
+            "--script",
+            "vuln",
+            "--script-timeout",
+            "60s",
+            "-p",
+            ports,
+            "-oX",
+            str(xml_path),
+            target.scan_host,
+        ]
+        result = self._run_command(
+            target=target,
+            workspace=workspace,
+            record=record,
+            tool="nmap",
+            profile="vuln_scripts",
+            command=command,
+            raw_output_path=log_path,
+            line_parser=lambda line, raw: self._with_raw(nmap.parse_line(line, target), raw),
+            handle_finding=handle_finding,
+        )
+        if xml_path.exists():
+            services, findings = nmap.parse_services(xml_path.read_text(encoding="utf-8", errors="ignore"), target)
+            self._merge_services(record, services)
+            for finding in findings:
+                finding.raw_output_path = str(xml_path)
+                handle_finding(finding)
+        self._log_result(result, workspace)
+
+    def _run_searchsploit(
+        self,
+        target: Target,
+        workspace: ScanWorkspace,
+        record: ScanRecord,
+        nmap_xml: Path,
+        handle_finding: Callable[[Finding], None],
+    ) -> None:
+        if not self.config.include_searchsploit or not self.config.tool_enabled("searchsploit"):
+            return
+        try:
+            binary = self.runner.require("searchsploit")
+        except ToolUnavailable as exc:
+            self.console.print(f"[yellow]{exc}. Se omite correlacion Exploit-DB.[/yellow]")
+            return
+        raw_path = workspace.raw_path("searchsploit", "nmap_xml", "log")
+        command = [binary, "--nmap", str(nmap_xml)]
+        result = self._run_command(
+            target=target,
+            workspace=workspace,
+            record=record,
+            tool="searchsploit",
+            profile="nmap_xml",
+            command=command,
+            raw_output_path=raw_path,
+            line_parser=lambda line, raw: self._with_raw(searchsploit.parse_line(line, target), raw),
+            handle_finding=handle_finding,
+        )
         self._log_result(result, workspace)
 
     def _run_smb_modules(
@@ -236,7 +325,27 @@ class ScanOrchestrator:
                     workspace=workspace,
                     record=record,
                     tool="nuclei",
-                    profile=safe_profile,
+                    profile=f"{safe_profile}_auto",
+                    command_builder=lambda binary, url=url: [
+                        binary,
+                        "-u",
+                        url,
+                        "-as",
+                        "-severity",
+                        self.config.nuclei_severity,
+                        "-jsonl",
+                        "-silent",
+                        "-no-color",
+                    ],
+                    parser=lambda line, raw: self._with_raw(nuclei.parse_json_line(line, target), raw),
+                    handle_finding=handle_finding,
+                )
+                self._run_simple_parser(
+                    target=target,
+                    workspace=workspace,
+                    record=record,
+                    tool="nuclei",
+                    profile=f"{safe_profile}_templates",
                     command_builder=lambda binary, url=url: [
                         binary,
                         "-u",
@@ -245,6 +354,7 @@ class ScanOrchestrator:
                         "-severity",
                         self.config.nuclei_severity,
                         "-jsonl",
+                        "-silent",
                         "-no-color",
                     ],
                     parser=lambda line, raw: self._with_raw(nuclei.parse_json_line(line, target), raw),

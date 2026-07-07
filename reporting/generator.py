@@ -5,7 +5,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from core.models import AuditIdentity, Finding, ScanRecord, SEVERITY_ORDER, clean_text
+from core.models import AuditIdentity, Finding, ScanRecord, SEVERITY_ORDER, clean_text, tail_text
 from .templates import HTML_STYLE
 
 
@@ -391,23 +391,25 @@ class ReportGenerator:
     def _markdown_commands(self, record: ScanRecord) -> list[str]:
         if not record.commands:
             return ["No se registraron comandos ejecutados."]
-        lines = ["| Herramienta | Perfil | Codigo | Timeout | Duracion | Salida cruda |", "|---|---|---:|---|---:|---|"]
+        lines = ["| Herramienta | Perfil | Codigo | Timeout | Duracion | Resumen salida | Salida cruda |", "|---|---|---:|---|---:|---|---|"]
         for command in record.commands:
             timeout = "si" if command.timed_out else "no"
+            output = clean_text(tail_text(command.stdout or command.stderr, 220), 220) or "-"
             lines.append(
-                f"| {command.tool} | {command.profile} | {command.returncode if command.returncode is not None else '-'} | {timeout} | {command.duration_seconds:.1f}s | `{command.raw_output_path}` |"
+                f"| {command.tool} | {command.profile} | {command.returncode if command.returncode is not None else '-'} | {timeout} | {command.duration_seconds:.1f}s | {output} | `{command.raw_output_path}` |"
             )
         return lines
 
     def _html_commands(self, record: ScanRecord) -> list[str]:
         if not record.commands:
             return ["<p>No se registraron comandos ejecutados.</p>"]
-        parts = ["<table><tr><th>Herramienta</th><th>Perfil</th><th>Codigo</th><th>Timeout</th><th>Duracion</th><th>Salida cruda</th></tr>"]
+        parts = ["<table><tr><th>Herramienta</th><th>Perfil</th><th>Codigo</th><th>Timeout</th><th>Duracion</th><th>Resumen salida</th><th>Salida cruda</th></tr>"]
         for command in record.commands:
             timeout = "si" if command.timed_out else "no"
             code = command.returncode if command.returncode is not None else "-"
+            output = tail_text(command.stdout or command.stderr, 260) or "-"
             parts.append(
-                f"<tr><td>{html.escape(command.tool)}</td><td>{html.escape(command.profile)}</td><td>{code}</td><td>{timeout}</td><td>{command.duration_seconds:.1f}s</td><td><code>{html.escape(str(command.raw_output_path))}</code></td></tr>"
+                f"<tr><td>{html.escape(command.tool)}</td><td>{html.escape(command.profile)}</td><td>{code}</td><td>{timeout}</td><td>{command.duration_seconds:.1f}s</td><td>{html.escape(output)}</td><td><code>{html.escape(str(command.raw_output_path))}</code></td></tr>"
             )
         parts.append("</table>")
         return parts

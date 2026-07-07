@@ -8,10 +8,12 @@ AV--servers ejecuta herramientas nativas de Kali, guarda evidencia cruda, genera
 
 - Lee objetivos desde `targets.txt` o desde `--target`.
 - Ejecuta Nmap para descubrimiento de puertos y deteccion de servicios.
+- Ejecuta `nmap --script vuln` para validar scripts NSE de vulnerabilidad.
+- Correlaciona versiones detectadas contra Exploit-DB con `searchsploit --nmap`.
 - Si el barrido inicial no devuelve servicios, ejecuta un fallback sobre puertos comunes para no finalizar con reportes vacios.
 - Ejecuta enumeracion SMB con `smbmap` y `enum4linux-ng` cuando corresponde.
 - Ejecuta fingerprinting web con `whatweb`.
-- Ejecuta validacion de vulnerabilidades con `nuclei`.
+- Ejecuta validacion de vulnerabilidades con `nuclei` en modo automatico y por templates.
 - Ejecuta checks web con `nikto`.
 - Genera evidencia en `raw_outputs/`.
 - Genera notas por hallazgo en `evidence_notes/`.
@@ -35,7 +37,7 @@ El instalador:
 
 - ejecuta `sudo apt update`;
 - ejecuta `sudo apt upgrade -y`;
-- instala `nmap`, `whatweb`, `nikto`, `smbmap`, `enum4linux-ng`, Python, Go y utilidades base;
+- instala `nmap`, `whatweb`, `nikto`, `smbmap`, `enum4linux-ng`, `exploitdb`, Python, Go y utilidades base;
 - crea `.venv`;
 - instala dependencias Python;
 - instala o actualiza Nuclei;
@@ -127,7 +129,9 @@ La version actual corrige el comportamiento observado donde se ejecutaba Nmap y 
 - si no hay servicios detectados en el primer barrido, ejecuta deteccion sobre puertos comunes;
 - si no se detectan servicios web pero el objetivo es una IP, prueba `http://IP` y `https://IP`;
 - SMB se intenta cuando se detecta 139/445 o cuando no hay datos de servicios y el fallback esta activo;
-- Nuclei recibe templates como argumentos separados para mayor compatibilidad.
+- Nuclei corre dos perfiles por URL: automatico (`-as`) y templates (`cves/`, `vulnerabilities/`, `misconfiguration/`);
+- Nmap ejecuta una fase dedicada `--script vuln`;
+- Searchsploit correlaciona el XML de Nmap contra Exploit-DB.
 
 ## Ejemplos Utiles
 
@@ -207,6 +211,7 @@ scans/
 | `whatweb` | Fingerprinting HTTP/HTTPS. |
 | `nuclei` | Validacion con templates de CVEs, vulnerabilities y misconfiguration. |
 | `nikto` | Checks de servidor web. |
+| `searchsploit` | Correlacion de servicios/versiones con Exploit-DB. |
 
 ## Reporte
 

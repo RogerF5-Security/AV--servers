@@ -4,7 +4,7 @@ set -Eeuo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NO_UPGRADE=0
 CHECK_ONLY=0
-REQUIRED_TOOLS=(python3 nmap whatweb nikto smbmap enum4linux-ng nuclei)
+REQUIRED_TOOLS=(python3 nmap whatweb nikto smbmap enum4linux-ng nuclei searchsploit)
 OPTIONAL_TOOLS=()
 
 for arg in "$@"; do
@@ -25,7 +25,7 @@ Uso:
 Acciones:
   - Ejecuta apt update.
   - Actualiza paquetes del sistema salvo que uses --no-upgrade.
-  - Instala dependencias Kali: nmap, whatweb, nikto, smbmap, enum4linux-ng.
+  - Instala dependencias Kali: nmap, whatweb, nikto, smbmap, enum4linux-ng, exploitdb.
   - Instala Python/Rich y herramientas auxiliares.
   - Instala o actualiza Nuclei y sus templates.
   - Verifica si AV--servers esta listo para iniciar.
@@ -133,6 +133,7 @@ sudo apt install -y \
   nikto \
   smbmap \
   enum4linux-ng \
+  exploitdb \
   golang-go
 
 log "Preparando entorno Python local"

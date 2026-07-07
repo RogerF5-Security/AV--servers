@@ -40,6 +40,14 @@ def clean_text(value: Any, limit: int = 1200) -> str:
     return text
 
 
+def tail_text(value: Any, limit: int = 500) -> str:
+    text = str(value or "").replace("\r", "")
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if len(text) > limit:
+        return "..." + text[-(limit - 3) :]
+    return text
+
+
 def slugify(value: str, fallback: str = "target") -> str:
     slug = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "").strip()).strip("._-")
     return slug[:90] or fallback
@@ -175,6 +183,7 @@ class CommandResult:
             "duration_seconds": round(self.duration_seconds, 3),
             "stdout_bytes": len(self.stdout.encode("utf-8", errors="ignore")),
             "stderr_bytes": len(self.stderr.encode("utf-8", errors="ignore")),
+            "output_tail": tail_text(self.stdout or self.stderr, 500),
         }
 
 
