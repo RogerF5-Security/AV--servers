@@ -16,6 +16,8 @@ AV--servers ejecuta herramientas nativas de Kali, guarda evidencia cruda, genera
 - Genera evidencia en `raw_outputs/`.
 - Genera notas por hallazgo en `evidence_notes/`.
 - Genera reportes Markdown y HTML completamente en espanol.
+- Genera un reporte final consolidado con todas las IPs/URLs de la campana.
+- Muestra al iniciar fecha/hora, hostname, IP origen, interfaz y MAC para whitelist del SOC.
 - Mantiene `state.json`, `commands.jsonl` y `exclusions.jsonl` para trazabilidad.
 
 ## Instalacion Automatica
@@ -38,7 +40,7 @@ El instalador:
 - instala dependencias Python;
 - instala o actualiza Nuclei;
 - actualiza templates de Nuclei;
-- valida la sintaxis del motor.
+- valida si la herramienta tiene todo completo para iniciar.
 
 Si no quieres actualizar todos los paquetes del sistema:
 
@@ -50,6 +52,12 @@ Activar entorno:
 
 ```bash
 source .venv/bin/activate
+```
+
+Verificar en cualquier momento si todo esta listo:
+
+```bash
+./install.sh --check-only
 ```
 
 ## Uso Zero-Touch
@@ -66,6 +74,19 @@ Ejecutar todo el escaneo:
 
 ```bash
 python3 vulnerability_engine.py
+```
+
+Al iniciar, la herramienta imprime un bloque como este para que el SOC pueda dar lista blanca:
+
+```text
+Identidad de ejecucion para SOC
+Fecha/hora de inicio        2026-07-07 14:30:00 CST-0600
+Hostname                    kali
+Usuario local               kali
+Interfaz origen             eth0
+IP origen para whitelist    10.189.169.200
+MAC origen para whitelist   00:11:22:33:44:55
+Objetivos cargados          15
 ```
 
 Ejecutar un objetivo unico:
@@ -155,6 +176,8 @@ python3 vulnerability_engine.py --target 10.189.169.130 --no-fallback-checks
 ```text
 scans/
   latest_campaign_summary.md
+  <timestamp>_reporte_final_todos_los_objetivos.md
+  <timestamp>_reporte_final_todos_los_objetivos.html
   <timestamp>_<target>/
     raw_outputs/
       nmap_discovery.log
@@ -187,7 +210,22 @@ scans/
 
 ## Reporte
 
-Cada reporte incluye:
+Cada objetivo genera su reporte individual y cada corrida genera un reporte final consolidado con todas las IPs/URLs.
+
+El reporte final incluye:
+
+- fecha/hora de inicio y fin;
+- hostname local;
+- usuario local;
+- interfaz de salida;
+- IP origen para whitelist SOC;
+- MAC origen para whitelist SOC;
+- tabla de todos los objetivos;
+- conteo global por severidad;
+- vulnerabilidades consolidadas;
+- falsos positivos descartados.
+
+Cada reporte individual incluye:
 
 - resumen ejecutivo;
 - conteo por severidad;

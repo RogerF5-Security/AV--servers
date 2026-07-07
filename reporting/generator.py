@@ -5,7 +5,7 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from core.models import Finding, ScanRecord, SEVERITY_ORDER, clean_text
+from core.models import AuditIdentity, Finding, ScanRecord, SEVERITY_ORDER, clean_text
 from .templates import HTML_STYLE
 
 
@@ -27,6 +27,172 @@ class ReportGenerator:
         md_path.write_text(self.markdown(record), encoding="utf-8")
         html_path.write_text(self.html(record), encoding="utf-8")
         return md_path, html_path
+
+    def write_campaign(
+        self,
+        *,
+        records: list[ScanRecord],
+        scans_dir: Path,
+        identity: AuditIdentity,
+        campaign_id: str,
+        finished_at: str,
+    ) -> tuple[Path, Path]:
+        scans_dir.mkdir(parents=True, exist_ok=True)
+        md_path = scans_dir / f"{campaign_id}_reporte_final_todos_los_objetivos.md"
+        html_path = scans_dir / f"{campaign_id}_reporte_final_todos_los_objetivos.html"
+        md_path.write_text(self.campaign_markdown(records, identity, finished_at), encoding="utf-8")
+        html_path.write_text(self.campaign_html(records, identity, finished_at), encoding="utf-8")
+        return md_path, html_path
+
+    def campaign_markdown(self, records: list[ScanRecord], identity: AuditIdentity, finished_at: str) -> str:
+        confirmed = self._sort([finding for record in records for finding in record.confirmed_findings])
+        discarded = self._sort([finding for record in records for finding in record.discarded_findings])
+        observed = self._sort([finding for record in records for finding in record.observed_findings])
+        lines: list[str] = [
+            "# Reporte Final Consolidado - Todos los Objetivos",
+            "",
+            "## Identidad de Ejecucion para SOC",
+            "",
+            f"- Inicio: `{identity.started_at}`",
+            f"- Fin: `{finished_at}`",
+            f"- Hostname: `{identity.hostname or '-'}`",
+            f"- Usuario local: `{identity.username or '-'}`",
+            f"- Interfaz origen: `{identity.interface or '-'}`",
+            f"- IP origen para whitelist: `{identity.source_ip or '-'}`",
+            f"- MAC origen para whitelist: `{identity.source_mac or '-'}`",
+            f"- Ruta usada para deteccion: `{identity.route_probe or '-'}`",
+            "",
+        ]
+        if identity.all_interfaces:
+            lines.extend(
+                [
+                    "### Interfaces Locales Detectadas",
+                    "",
+                    "| Interfaz | IP | CIDR | MAC |",
+                    "|---|---|---|---|",
+                ]
+            )
+            for item in identity.all_interfaces:
+                lines.append(
+                    f"| {item.get('interface', '-')} | {item.get('ip', '-')} | {item.get('cidr', '-')} | {item.get('mac', '-')} |"
+                )
+            lines.append("")
+
+        lines.extend(
+            [
+                "## Resumen Ejecutivo",
+                "",
+                self._executive_summary(confirmed, discarded, observed),
+                "",
+                "### Objetivos Analizados",
+                "",
+                "| Objetivo | IP resuelta | Servicios | Confirmados | Observados | Descartados | Reporte individual |",
+                "|---|---|---:|---:|---:|---:|---|",
+            ]
+        )
+        for record in records:
+            report_path = f"{record.workspace}/reports/{record.target.slug}_reporte.html"
+            lines.append(
+                f"| {record.target.display} | {record.target.ip or '-'} | {len(record.services)} | {len(record.confirmed_findings)} | {len(record.observed_findings)} | {len(record.discarded_findings)} | `{report_path}` |"
+            )
+
+        lines.extend(
+            [
+                "",
+                "### Resumen de Riesgo Global",
+                "",
+                "| Severidad | Confirmados | Observados | Descartados |",
+                "|---|---:|---:|---:|",
+            ]
+        )
+        for severity in ["Critical", "High", "Medium", "Low", "Info"]:
+            lines.append(
+                f"| {self._sev(severity)} | {self._count(confirmed, severity)} | {self._count(observed, severity)} | {self._count(discarded, severity)} |"
+            )
+
+        lines.extend(["", "## Vulnerabilidades Confirmadas Consolidadas", ""])
+        lines.extend(self._markdown_findings(confirmed, empty="No se confirmaron vulnerabilidades en la campana."))
+        if observed:
+            lines.extend(["", "## Observaciones Consolidadas", ""])
+            lines.extend(self._markdown_findings(observed, empty=""))
+        lines.extend(["", "## Falsos Positivos Descartados", ""])
+        if discarded:
+            lines.extend(["| Herramienta | Objetivo | Severidad | Titulo | Nota |", "|---|---|---|---|---|"])
+            for finding in discarded:
+                lines.append(
+                    f"| {finding.tool} | {finding.target} | {self._sev(finding.severity)} | {clean_text(finding.title, 120)} | {clean_text(finding.auditor_note, 160)} |"
+                )
+        else:
+            lines.append("No se descartaron hallazgos.")
+        lines.append("")
+        return "\n".join(lines)
+
+    def campaign_html(self, records: list[ScanRecord], identity: AuditIdentity, finished_at: str) -> str:
+        confirmed = self._sort([finding for record in records for finding in record.confirmed_findings])
+        discarded = self._sort([finding for record in records for finding in record.discarded_findings])
+        observed = self._sort([finding for record in records for finding in record.observed_findings])
+        parts = [
+            "<!doctype html><html><head><meta charset='utf-8'>",
+            "<title>Reporte Final Consolidado - AV--servers</title>",
+            f"<style>{HTML_STYLE}</style></head><body>",
+            "<h1>Reporte Final Consolidado - Todos los Objetivos</h1>",
+            "<h2>Identidad de Ejecucion para SOC</h2>",
+            "<table>",
+            f"<tr><th>Inicio</th><td>{html.escape(identity.started_at)}</td></tr>",
+            f"<tr><th>Fin</th><td>{html.escape(finished_at)}</td></tr>",
+            f"<tr><th>Hostname</th><td>{html.escape(identity.hostname or '-')}</td></tr>",
+            f"<tr><th>Usuario local</th><td>{html.escape(identity.username or '-')}</td></tr>",
+            f"<tr><th>Interfaz origen</th><td>{html.escape(identity.interface or '-')}</td></tr>",
+            f"<tr><th>IP origen para whitelist</th><td>{html.escape(identity.source_ip or '-')}</td></tr>",
+            f"<tr><th>MAC origen para whitelist</th><td>{html.escape(identity.source_mac or '-')}</td></tr>",
+            "</table>",
+        ]
+        if identity.all_interfaces:
+            parts.append("<h3>Interfaces Locales Detectadas</h3>")
+            parts.append("<table><tr><th>Interfaz</th><th>IP</th><th>CIDR</th><th>MAC</th></tr>")
+            for item in identity.all_interfaces:
+                parts.append(
+                    f"<tr><td>{html.escape(item.get('interface', '-'))}</td><td>{html.escape(item.get('ip', '-'))}</td><td>{html.escape(item.get('cidr', '-'))}</td><td>{html.escape(item.get('mac', '-'))}</td></tr>"
+                )
+            parts.append("</table>")
+
+        parts.extend(
+            [
+                "<h2>Resumen Ejecutivo</h2>",
+                f"<p>{html.escape(self._executive_summary(confirmed, discarded, observed))}</p>",
+                "<h3>Objetivos Analizados</h3>",
+                "<table><tr><th>Objetivo</th><th>IP resuelta</th><th>Servicios</th><th>Confirmados</th><th>Observados</th><th>Descartados</th><th>Workspace</th></tr>",
+            ]
+        )
+        for record in records:
+            parts.append(
+                f"<tr><td>{html.escape(record.target.display)}</td><td>{html.escape(record.target.ip or '-')}</td><td>{len(record.services)}</td><td>{len(record.confirmed_findings)}</td><td>{len(record.observed_findings)}</td><td>{len(record.discarded_findings)}</td><td><code>{html.escape(record.workspace)}</code></td></tr>"
+            )
+        parts.append("</table>")
+        parts.append("<h3>Resumen de Riesgo Global</h3>")
+        parts.append("<table><tr><th>Severidad</th><th>Confirmados</th><th>Observados</th><th>Descartados</th></tr>")
+        for severity in ["Critical", "High", "Medium", "Low", "Info"]:
+            parts.append(
+                f"<tr><td class='sev-{severity}'>{html.escape(self._sev(severity))}</td><td>{self._count(confirmed, severity)}</td><td>{self._count(observed, severity)}</td><td>{self._count(discarded, severity)}</td></tr>"
+            )
+        parts.append("</table>")
+        parts.append("<h2>Vulnerabilidades Confirmadas Consolidadas</h2>")
+        parts.extend(self._html_findings(confirmed, "No se confirmaron vulnerabilidades en la campana."))
+        if observed:
+            parts.append("<h2>Observaciones Consolidadas</h2>")
+            parts.extend(self._html_findings(observed, ""))
+        parts.append("<h2>Falsos Positivos Descartados</h2>")
+        if discarded:
+            parts.append("<table><tr><th>Herramienta</th><th>Objetivo</th><th>Severidad</th><th>Titulo</th><th>Nota</th></tr>")
+            for finding in discarded:
+                parts.append(
+                    f"<tr><td>{html.escape(finding.tool)}</td><td>{html.escape(finding.target)}</td><td>{html.escape(self._sev(finding.severity))}</td><td>{html.escape(finding.title)}</td><td>{html.escape(finding.auditor_note)}</td></tr>"
+                )
+            parts.append("</table>")
+        else:
+            parts.append("<p>No se descartaron hallazgos.</p>")
+        parts.append("</body></html>")
+        return "\n".join(parts)
 
     def markdown(self, record: ScanRecord) -> str:
         confirmed = self._sort(record.confirmed_findings)

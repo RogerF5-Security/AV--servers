@@ -3,17 +3,24 @@ set -Eeuo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NO_UPGRADE=0
+CHECK_ONLY=0
+REQUIRED_TOOLS=(python3 nmap whatweb nikto smbmap enum4linux-ng nuclei)
+OPTIONAL_TOOLS=()
 
 for arg in "$@"; do
   case "$arg" in
     --no-upgrade)
       NO_UPGRADE=1
       ;;
+    --check-only)
+      CHECK_ONLY=1
+      ;;
     -h|--help)
       cat <<'HELP'
 Uso:
   ./install.sh
   ./install.sh --no-upgrade
+  ./install.sh --check-only
 
 Acciones:
   - Ejecuta apt update.
@@ -21,6 +28,7 @@ Acciones:
   - Instala dependencias Kali: nmap, whatweb, nikto, smbmap, enum4linux-ng.
   - Instala Python/Rich y herramientas auxiliares.
   - Instala o actualiza Nuclei y sus templates.
+  - Verifica si AV--servers esta listo para iniciar.
 HELP
       exit 0
       ;;
@@ -39,7 +47,68 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+check_ready() {
+  local missing=0
+  log "Verificando herramientas requeridas"
+  for tool in "${REQUIRED_TOOLS[@]}"; do
+    if need_cmd "$tool"; then
+      printf '[OK] %s -> %s\n' "$tool" "$(command -v "$tool")"
+    else
+      printf '[FALTA] %s no esta en PATH\n' "$tool" >&2
+      missing=1
+    fi
+  done
+
+  log "Verificando herramientas recomendadas"
+  for tool in "${OPTIONAL_TOOLS[@]}"; do
+    if need_cmd "$tool"; then
+      printf '[OK] %s -> %s\n' "$tool" "$(command -v "$tool")"
+    else
+      printf '[WARN] %s no esta en PATH\n' "$tool" >&2
+    fi
+  done
+
+  log "Verificando entorno Python"
+  if [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
+    "$PROJECT_DIR/.venv/bin/python" - <<'PY'
+import rich
+print("[OK] Python venv y rich disponibles")
+PY
+  else
+    printf '[FALTA] .venv/bin/python no existe. Ejecuta ./install.sh\n' >&2
+    missing=1
+  fi
+
+  log "Verificando motor"
+  if [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
+    "$PROJECT_DIR/.venv/bin/python" -B -m py_compile vulnerability_engine.py core/*.py parsers/*.py reporting/*.py || missing=1
+    "$PROJECT_DIR/.venv/bin/python" vulnerability_engine.py --help >/dev/null || missing=1
+  else
+    python3 -B -m py_compile vulnerability_engine.py core/*.py parsers/*.py reporting/*.py || missing=1
+    python3 vulnerability_engine.py --help >/dev/null || missing=1
+  fi
+
+  log "Verificando targets.txt"
+  if [[ -f targets.txt ]] && grep -Ev '^\s*(#|$)' targets.txt >/dev/null 2>&1; then
+    printf '[OK] targets.txt contiene objetivos\n'
+  else
+    printf '[WARN] targets.txt no tiene objetivos activos. Agrega una IP, host o URL por linea.\n' >&2
+  fi
+
+  if [[ "$missing" -eq 0 ]]; then
+    log "AV--servers esta listo para iniciar"
+    return 0
+  fi
+  log "AV--servers aun no esta completo para iniciar"
+  return 1
+}
+
 cd "$PROJECT_DIR"
+
+if [[ "$CHECK_ONLY" -eq 1 ]]; then
+  check_ready
+  exit $?
+fi
 
 log "Actualizando indices de paquetes"
 sudo apt update
@@ -107,6 +176,8 @@ fi
 log "Validando sintaxis del motor"
 "$PROJECT_DIR/.venv/bin/python" -B -m py_compile vulnerability_engine.py core/*.py parsers/*.py reporting/*.py
 
+check_ready
+
 log "Instalacion finalizada"
 cat <<EOF
 
@@ -117,5 +188,8 @@ Uso recomendado:
 
 Modo interactivo opcional:
   python3 vulnerability_engine.py --interactive
+
+Verificacion rapida:
+  ./install.sh --check-only
 
 EOF

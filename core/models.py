@@ -46,6 +46,21 @@ def slugify(value: str, fallback: str = "target") -> str:
 
 
 @dataclass
+class AuditIdentity:
+    started_at: str
+    hostname: str = ""
+    username: str = ""
+    interface: str = ""
+    source_ip: str = ""
+    source_mac: str = ""
+    route_probe: str = ""
+    all_interfaces: list[dict[str, str]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class Target:
     raw: str
     host: str

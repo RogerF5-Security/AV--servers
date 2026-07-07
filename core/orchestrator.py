@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 from parsers import enum4linux, nikto, nmap, nuclei, smbmap, whatweb
 from reporting.generator import ReportGenerator
 
 from .config import ScanConfig
+from .identity import IdentityDetector
 from .interactive import InteractiveReview
-from .models import CommandResult, Finding, ScanRecord, Service, Target
+from .models import AuditIdentity, CommandResult, Finding, ScanRecord, Service, Target
 from .runner import CommandRunner, ToolUnavailable
 from .workspace import ScanWorkspace
 
@@ -25,14 +29,26 @@ class ScanOrchestrator:
         self.reporter = ReportGenerator()
 
     def scan_targets(self, targets: list[Target]) -> list[ScanRecord]:
+        campaign_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        identity = IdentityDetector.detect()
+        self._print_audit_identity(identity, targets)
         records: list[ScanRecord] = []
         for target in targets:
-            records.append(self.scan_target(target))
-        self._write_campaign_summary(records)
+            records.append(self.scan_target(target, campaign_id))
+        finished_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z%z")
+        self._write_campaign_summary(records, identity, finished_at)
+        final_md, final_html = self.reporter.write_campaign(
+            records=records,
+            scans_dir=self.config.repo_root / "scans",
+            identity=identity,
+            campaign_id=campaign_id,
+            finished_at=finished_at,
+        )
+        self.console.print(f"[bold green]Reporte final consolidado:[/bold green] {final_md} | {final_html}")
         return records
 
-    def scan_target(self, target: Target) -> ScanRecord:
-        workspace = ScanWorkspace(self.config.repo_root, target)
+    def scan_target(self, target: Target, campaign_id: str | None = None) -> ScanRecord:
+        workspace = ScanWorkspace(self.config.repo_root, target, timestamp=campaign_id)
         workspace.prepare()
         record = ScanRecord(target=target, workspace=str(workspace.root))
         seen_findings: set[str] = set()
@@ -406,7 +422,18 @@ class ScanOrchestrator:
     def _log_result(self, result: CommandResult, workspace: ScanWorkspace) -> None:
         workspace.append_command(result.to_dict())
 
-    def _write_campaign_summary(self, records: list[ScanRecord]) -> None:
+    def _print_audit_identity(self, identity: AuditIdentity, targets: list[Target]) -> None:
+        table = Table(show_header=False, box=None)
+        table.add_row("[bold]Fecha/hora de inicio[/bold]", identity.started_at)
+        table.add_row("[bold]Hostname[/bold]", identity.hostname or "-")
+        table.add_row("[bold]Usuario local[/bold]", identity.username or "-")
+        table.add_row("[bold]Interfaz origen[/bold]", identity.interface or "-")
+        table.add_row("[bold]IP origen para whitelist SOC[/bold]", identity.source_ip or "-")
+        table.add_row("[bold]MAC origen para whitelist SOC[/bold]", identity.source_mac or "-")
+        table.add_row("[bold]Objetivos cargados[/bold]", str(len(targets)))
+        self.console.print(Panel(table, title="Identidad de ejecucion para SOC", border_style="cyan"))
+
+    def _write_campaign_summary(self, records: list[ScanRecord], identity: AuditIdentity, finished_at: str) -> None:
         if not records:
             return
         summary_dir = self.config.repo_root / "scans"
@@ -414,6 +441,12 @@ class ScanOrchestrator:
         path = summary_dir / "latest_campaign_summary.md"
         lines = [
             "# Resumen de la Ultima Campana",
+            "",
+            f"- Inicio: `{identity.started_at}`",
+            f"- Fin: `{finished_at}`",
+            f"- IP origen SOC: `{identity.source_ip}`",
+            f"- MAC origen SOC: `{identity.source_mac}`",
+            f"- Interfaz origen: `{identity.interface}`",
             "",
             "| Objetivo | Confirmados | Observados | Descartados | Workspace |",
             "|---|---:|---:|---:|---|",
